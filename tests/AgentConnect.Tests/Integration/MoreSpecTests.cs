@@ -426,6 +426,73 @@ public sealed class MoreSpecTests
         Assert.Contains("expected Object", data.Text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task McpRawArguments_ReturnThePinnedTexts()
+    {
+        var owner = await _session.CreateTenantAsync("Raw");
+        var workspace = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces", new { name = "Ops", members = new[] { new { email = owner.Email, role = "WorkspaceOwner" } } }, owner.Token)).Body).GetProperty("id").GetString()!;
+        var created = await _session.ToolAsync(owner.Token, "create_list", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["name"] = "Bad",
+            ["schema"] = Session.Node("[]"),
+        });
+        Assert.True(created.IsError);
+        Assert.Equal("$: expected Object, found Array", created.Text);
+        var list = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", new { name = "Tasks", schema = JsonDocument.Parse(TaskSchema).RootElement }, owner.Token)).Body).GetProperty("id").GetString()!;
+        var replaced = await _session.ToolAsync(owner.Token, "update_schema", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["schema"] = Session.Node("1"),
+        });
+        Assert.True(replaced.IsError);
+        Assert.Equal("$: expected Object, found Number", replaced.Text);
+
+        Assert.Equal("pageSize: must be a whole number of at least 1", (await PageAsync("list_workspaces", owner.Token, null, 1.5)).Text);
+        Assert.Equal("pageSize: must be a whole number of at least 1", (await PageAsync("list_lists", owner.Token, workspace, "10")).Text);
+        Assert.Equal("pageSize: must be a whole number of at least 1", (await _session.ToolAsync(owner.Token, "query_items", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["shape"] = "ids",
+            ["pageSize"] = true,
+        })).Text);
+        Assert.Equal("pageSize: must be a whole number of at least 1", (await PageAsync("list_workspace_members", owner.Token, workspace, true)).Text);
+
+        var shape = await _session.ToolAsync(owner.Token, "query_items", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["shape"] = 1,
+        });
+        Assert.True(shape.IsError);
+        Assert.Equal("shape: must be full or ids", shape.Text);
+        var continuation = await _session.ToolAsync(owner.Token, "query_items", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["shape"] = "ids",
+            ["continuation"] = true,
+        });
+        Assert.True(continuation.IsError);
+        Assert.Equal("continuation: invalid token", continuation.Text);
+        var listed = await _session.ToolAsync(owner.Token, "list_workspaces", new Dictionary<string, object?>
+        {
+            ["continuation"] = 1,
+        });
+        Assert.True(listed.IsError);
+        Assert.Equal("continuation: invalid token", listed.Text);
+
+        var jsonNull = JsonSerializer.Deserialize<JsonElement>("null");
+        var where = await QueryAsync(owner.Token, workspace, list, "where", jsonNull);
+        Assert.Equal("where: expected array, found Null", where.Text);
+        var orderBy = await QueryAsync(owner.Token, workspace, list, "orderBy", jsonNull);
+        Assert.Equal("orderBy: expected Object, found Null", orderBy.Text);
+        var schemaVersion = await QueryAsync(owner.Token, workspace, list, "schemaVersion", jsonNull);
+        Assert.Equal("schemaVersion: invalid filter", schemaVersion.Text);
+    }
+
     #region private
 
     private async Task PutItem(string token, string workspace, string listId, string itemId, string json)
@@ -439,6 +506,32 @@ public sealed class MoreSpecTests
         var response = await _session.Platform.ApiClient.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
         Assert.True((int)response.StatusCode == 200, (int)response.StatusCode + " " + body);
+    }
+
+    private async Task<(bool IsError, string Text)> PageAsync(string tool, string token, string? workspaceId, object pageSize)
+    {
+        var arguments = new Dictionary<string, object?> { ["pageSize"] = pageSize };
+        if (workspaceId is not null)
+        {
+            arguments["workspaceId"] = workspaceId;
+        }
+
+        var result = await _session.ToolAsync(token, tool, arguments);
+        Assert.True(result.IsError);
+        return result;
+    }
+
+    private async Task<(bool IsError, string Text)> QueryAsync(string token, string workspaceId, string listId, string name, JsonElement value)
+    {
+        var result = await _session.ToolAsync(token, "query_items", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspaceId,
+            ["listId"] = listId,
+            ["shape"] = "ids",
+            [name] = value,
+        });
+        Assert.True(result.IsError);
+        return result;
     }
 
     private async Task<string> Invite(string ownerToken, string email)

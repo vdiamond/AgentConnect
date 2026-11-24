@@ -40,10 +40,10 @@ Secrets are environment variables or Container Apps secrets. Do not put them in 
 | `AgentConnect__DataProvider` | `Cosmos` or `Memory`. `Memory` is refused when the environment is Production |
 | `AgentConnect__Cosmos__Endpoint` | Cosmos account endpoint (managed identity) |
 | `AGENTCONNECT_COSMOS_ENDPOINT` | Emulator endpoint for the Cosmos integration tests |
-| `AGENTCONNECT_COSMOS_KEY` | Emulator key. When set, the client uses this key instead of managed identity |
+| `AGENTCONNECT_COSMOS_KEY` | Emulator account key. Used only when the endpoint host is `localhost`, `127.0.0.1`, or `::1` and the environment is set to a value other than Production. Otherwise the client uses managed identity |
 | `AgentConnect__Cosmos__Database` | Database name |
 | `AgentConnect__Email__Endpoint` | Azure Communication Services endpoint |
 | `AgentConnect__Email__SenderAddress` | Sender on `azure4smb.com` |
 | `AgentConnect__ApplicationInsights__ConnectionString` | Audit and telemetry |
 
-Cosmos and email access use `ManagedIdentityCredential` for the system-assigned identity. The emulator key is read only from `AGENTCONNECT_COSMOS_KEY` and is never committed. Queries that order by two properties need composite indexes (`created`+`id` and `email`+`id` on Members; `updated`+`id` on Workspaces, Lists, and Items). The emulator tests create those containers and indexes. The application does not create Azure resources.
+Cosmos and email access use `ManagedIdentityCredential` for the system-assigned identity. The emulator key is read only from `AGENTCONNECT_COSMOS_KEY` and is never committed. It is used only for a loopback endpoint outside Production, as in the table above. Queries that order by two properties need composite indexes (`created`+`id` and `email`+`id` on Members; `updated`+`id` on Workspaces, Lists, and Items). Members, Workspaces, and Lists also need a unique key policy. Cosmos DB can only set a unique key when the container is created; it cannot be added later. The paths are Members `/emailKey` (partition `/tenantId`), Workspaces `/nameKey` (partition `/tenantId`), and Lists `/nameKey` (partition `/tenantId` and `/workspaceId`). Tenants and Items have no unique key. The emulator tests create those containers, indexes, and unique keys. The application does not create Azure resources.

@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -33,12 +32,17 @@ public sealed class AgentConnectTools
     }
 
     /// <summary>Lists the workspaces the caller can see.</summary>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="continuation">The continuation token.</param>
+    /// <param name="pageSize">The page size, as raw JSON.</param>
+    /// <param name="continuation">The continuation token, as raw JSON.</param>
+    /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
     [McpServerTool(Name = "list_workspaces"), Description("Lists the workspaces the caller can see, with the caller's role in each.")]
-    public async Task<CallToolResult> ListWorkspaces(int? pageSize = null, string? continuation = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> ListWorkspaces(
+        JsonElement? pageSize = null,
+        JsonElement? continuation = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -46,7 +50,8 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _workspaces.ListAsync(caller, pageSize, pageSize is not null, continuation, cancellationToken)).ConfigureAwait(false));
+        var (size, specified, token) = Page(request, pageSize, continuation);
+        return ToResult(await Guarded(() => _workspaces.ListAsync(caller, size, specified, token, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Updates a workspace name and description.</summary>
@@ -69,12 +74,18 @@ public sealed class AgentConnectTools
 
     /// <summary>Lists the lists in a workspace.</summary>
     /// <param name="workspaceId">The workspace id.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="continuation">The continuation token.</param>
+    /// <param name="pageSize">The page size, as raw JSON.</param>
+    /// <param name="continuation">The continuation token, as raw JSON.</param>
+    /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
     [McpServerTool(Name = "list_lists"), Description("Lists the lists in a workspace.")]
-    public async Task<CallToolResult> ListLists(string workspaceId, int? pageSize = null, string? continuation = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> ListLists(
+        string workspaceId,
+        JsonElement? pageSize = null,
+        JsonElement? continuation = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -82,18 +93,26 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _content.ListListsAsync(caller, workspaceId, pageSize, pageSize is not null, continuation, cancellationToken)).ConfigureAwait(false));
+        var (size, specified, token) = Page(request, pageSize, continuation);
+        return ToResult(await Guarded(() => _content.ListListsAsync(caller, workspaceId, size, specified, token, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Creates a list.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="name">The name.</param>
-    /// <param name="schema">The EasyJsonSchema document.</param>
+    /// <param name="schema">The EasyJsonSchema document, as raw JSON.</param>
     /// <param name="description">The description.</param>
+    /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The list.</returns>
     [McpServerTool(Name = "create_list"), Description("Creates a list with an EasyJsonSchema schema.")]
-    public async Task<CallToolResult> CreateList(string workspaceId, string name, JsonObject schema, string? description = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> CreateList(
+        string workspaceId,
+        string name,
+        JsonElement? schema = null,
+        string? description = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -101,7 +120,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _content.CreateListAsync(caller, workspaceId, name, description, description is not null, schema.ToJsonString(), cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.CreateListAsync(caller, workspaceId, name, description, description is not null, JsonText(request, "schema", schema), cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Updates a list name or description.</summary>
@@ -160,11 +179,17 @@ public sealed class AgentConnectTools
     /// <summary>Replaces a list schema.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="listId">The list id.</param>
-    /// <param name="schema">The new schema.</param>
+    /// <param name="schema">The new schema, as raw JSON.</param>
+    /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The new version.</returns>
     [McpServerTool(Name = "update_schema"), Description("Supplies a new schema. The list version increases by 1.")]
-    public async Task<CallToolResult> UpdateSchema(string workspaceId, string listId, JsonObject schema, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> UpdateSchema(
+        string workspaceId,
+        string listId,
+        JsonElement? schema = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -172,18 +197,18 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _content.UpdateSchemaAsync(caller, workspaceId, listId, schema.ToJsonString(), cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.UpdateSchemaAsync(caller, workspaceId, listId, JsonText(request, "schema", schema), cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Queries items.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="listId">The list id.</param>
-    /// <param name="shape">full or ids.</param>
+    /// <param name="shape">full or ids, as raw JSON.</param>
     /// <param name="schemaVersion">The version filter, as raw JSON.</param>
     /// <param name="where">The conditions, as raw JSON.</param>
     /// <param name="orderBy">The sort, as raw JSON.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="continuation">The continuation token.</param>
+    /// <param name="pageSize">The page size, as raw JSON.</param>
+    /// <param name="continuation">The continuation token, as raw JSON.</param>
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
@@ -191,12 +216,12 @@ public sealed class AgentConnectTools
     public async Task<CallToolResult> QueryItems(
         string workspaceId,
         string listId,
-        string? shape = null,
+        JsonElement? shape = null,
         JsonElement? schemaVersion = null,
         JsonElement? where = null,
         JsonElement? orderBy = null,
-        int? pageSize = null,
-        string? continuation = null,
+        JsonElement? pageSize = null,
+        JsonElement? continuation = null,
         RequestContext<CallToolRequestParams>? request = null,
         CancellationToken cancellationToken = default)
     {
@@ -207,7 +232,20 @@ public sealed class AgentConnectTools
         }
 
         var unknown = UnknownArguments(request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation");
-        var result = await Guarded(() => _content.QueryItemsAsync(caller, workspaceId, listId, shape, Copy(schemaVersion), Copy(where), Copy(orderBy), unknown, pageSize, pageSize is not null, continuation, cancellationToken)).ConfigureAwait(false);
+        var (size, specified, token) = Page(request, pageSize, continuation);
+        var result = await Guarded(() => _content.QueryItemsAsync(
+            caller,
+            workspaceId,
+            listId,
+            TextArgument(request, "shape", shape),
+            Read(request, "schemaVersion", schemaVersion),
+            Read(request, "where", where),
+            Read(request, "orderBy", orderBy),
+            unknown,
+            size,
+            specified,
+            token,
+            cancellationToken)).ConfigureAwait(false);
         return ToResult(result);
     }
 
@@ -335,12 +373,18 @@ public sealed class AgentConnectTools
 
     /// <summary>Lists workspace members.</summary>
     /// <param name="workspaceId">The workspace id.</param>
-    /// <param name="pageSize">The page size.</param>
-    /// <param name="continuation">The continuation token.</param>
+    /// <param name="pageSize">The page size, as raw JSON.</param>
+    /// <param name="continuation">The continuation token, as raw JSON.</param>
+    /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
     [McpServerTool(Name = "list_workspace_members"), Description("Lists the members who hold a role on a workspace.")]
-    public async Task<CallToolResult> ListWorkspaceMembers(string workspaceId, int? pageSize = null, string? continuation = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> ListWorkspaceMembers(
+        string workspaceId,
+        JsonElement? pageSize = null,
+        JsonElement? continuation = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -348,7 +392,8 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _members.ListWorkspaceMembersAsync(caller, workspaceId, pageSize, pageSize is not null, continuation, cancellationToken)).ConfigureAwait(false));
+        var (size, specified, token) = Page(request, pageSize, continuation);
+        return ToResult(await Guarded(() => _members.ListWorkspaceMembersAsync(caller, workspaceId, size, specified, token, cancellationToken)).ConfigureAwait(false));
     }
 
     #region private
@@ -364,9 +409,61 @@ public sealed class AgentConnectTools
     private readonly MemberService _members;
     private readonly ContentService _content;
 
-    private static JsonElement Copy(JsonElement? element)
+    private static JsonElement Read(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound)
     {
-        return element is { } value && value.ValueKind != JsonValueKind.Undefined ? value.Clone() : default;
+        if (request?.Params?.Arguments is { } arguments && arguments.TryGetValue(name, out var raw))
+        {
+            return raw.ValueKind == JsonValueKind.Undefined ? default : raw.Clone();
+        }
+
+        return bound is { } value && value.ValueKind != JsonValueKind.Undefined ? value.Clone() : default;
+    }
+
+    private static string? JsonText(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound)
+    {
+        var element = Read(request, name, bound);
+        return element.ValueKind == JsonValueKind.Undefined ? null : element.GetRawText();
+    }
+
+    private static string? TextArgument(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound)
+    {
+        var element = Read(request, name, bound);
+        return element.ValueKind switch
+        {
+            JsonValueKind.Undefined => null,
+            JsonValueKind.String => element.GetString(),
+            _ => element.GetRawText(),
+        };
+    }
+
+    private static (int? Size, bool Specified, string? Continuation) Page(RequestContext<CallToolRequestParams>? request, JsonElement? pageSize, JsonElement? continuation)
+    {
+        var sizeElement = Read(request, "pageSize", pageSize);
+        var specified = sizeElement.ValueKind != JsonValueKind.Undefined;
+        int? size = null;
+        if (specified && IsWhole(sizeElement, out var number))
+        {
+            size = number;
+        }
+
+        return (size, specified, TextArgument(request, "continuation", continuation));
+    }
+
+    private static bool IsWhole(JsonElement element, out int number)
+    {
+        number = 0;
+        if (element.ValueKind != JsonValueKind.Number)
+        {
+            return false;
+        }
+
+        var raw = element.GetRawText();
+        if (raw.Contains('.') || raw.Contains('e') || raw.Contains('E') || raw.StartsWith('-'))
+        {
+            return false;
+        }
+
+        return element.TryGetInt32(out number) && number >= 1;
     }
 
     private static List<string> UnknownArguments(RequestContext<CallToolRequestParams>? request, params string[] known)
