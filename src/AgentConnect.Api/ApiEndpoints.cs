@@ -376,7 +376,7 @@ public static class ApiEndpoints
         }
 
         string? schema = null;
-        if (body.TryGetProperty("schema", out var schemaElement))
+        if (body.TryGetProperty("schema", out var schemaElement) && schemaElement.ValueKind != JsonValueKind.Null)
         {
             schema = schemaElement.GetRawText();
         }

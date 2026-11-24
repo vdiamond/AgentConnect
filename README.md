@@ -38,6 +38,7 @@ Secrets are environment variables or Container Apps secrets. Do not put them in 
 | `AgentConnect__McpServerUrl` | MCP URL included in emails |
 | `AgentConnect__RestApiUrl` | REST URL included in emails |
 | `AgentConnect__DataProvider` | `Cosmos` or `Memory`. `Memory` is refused when the environment is Production |
+| `AgentConnect__ConcurrencyRetries` | ETag retries for Tenant, Member, Workspace, and List writes. Default 3 |
 | `AgentConnect__Cosmos__Endpoint` | Cosmos account endpoint (managed identity) |
 | `AGENTCONNECT_COSMOS_ENDPOINT` | Emulator endpoint for the Cosmos integration tests |
 | `AGENTCONNECT_COSMOS_KEY` | Emulator account key. Used only when the endpoint host is `localhost`, `127.0.0.1`, or `::1` and the environment is set to a value other than Production. Otherwise the client uses managed identity |

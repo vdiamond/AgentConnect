@@ -209,7 +209,7 @@ public sealed class TenantService
         if (nextDefault != caller.Tenant.PageSizeDefault || nextMax != caller.Tenant.PageSizeMax)
         {
             await DocumentUpdates.UpdateAsync(
-                ct => _tenants.GetAsync(caller.Tenant.Id, ct),
+                ct => DocumentUpdates.LiveAsync(token => _tenants.GetAsync(caller.Tenant.Id, token), current => current.DeletedAt, ct),
                 (current, ct) => _tenants.ReplaceAsync(current, ct),
                 current =>
                 {

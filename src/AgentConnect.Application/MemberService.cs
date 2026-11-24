@@ -169,9 +169,11 @@ public sealed class MemberService
             return OperationResult<EmailSentResult>.Ok(new EmailSentResult(false));
         }
 
-        member.Value.LastTokenSent = PlatformSupport.After(_clock.UtcNow, member.Value.LastTokenIssued);
-        await _members.ReplaceAsync(member.Value, cancellationToken).ConfigureAwait(false);
-        Audit(caller.Member.Id, AuditActions.TokenSent, ("tenantId", caller.Tenant.Id), ("memberId", member.Value.Id));
+        var stored = await UpdateMemberAsync(member.Value.TenantId, member.Value.Id, current =>
+        {
+            current.LastTokenSent = PlatformSupport.After(_clock.UtcNow, current.LastTokenIssued);
+        }, cancellationToken).ConfigureAwait(false);
+        Audit(caller.Member.Id, AuditActions.TokenSent, ("tenantId", caller.Tenant.Id), ("memberId", stored.Id));
         return OperationResult<EmailSentResult>.Ok(new EmailSentResult(true));
     }
 

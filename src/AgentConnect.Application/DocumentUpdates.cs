@@ -50,6 +50,31 @@ public static class DocumentUpdates
             }
         }
     }
+
+    /// <summary>
+    /// Reads a document and treats a soft delete as gone. FR-51.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="read">Reads the current document.</param>
+    /// <param name="deletedAt">Reads <c>deletedAt</c>.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The live document, or null when it is missing or deleted.</returns>
+    public static async Task<T?> LiveAsync<T>(
+        Func<CancellationToken, Task<T?>> read,
+        Func<T, DateTimeOffset?> deletedAt,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        ArgumentNullException.ThrowIfNull(deletedAt);
+        var document = await read(cancellationToken).ConfigureAwait(false);
+        if (document is null || deletedAt(document) is not null)
+        {
+            return null;
+        }
+
+        return document;
+    }
 }
 
 /// <summary>

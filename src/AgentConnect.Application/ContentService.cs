@@ -148,7 +148,7 @@ public sealed class ContentService
             try
             {
                 list = await DocumentUpdates.UpdateAsync(
-                    ct => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, ct),
+                    ct => DocumentUpdates.LiveAsync(token => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, token), list => list.DeletedAt, ct),
                     (current, ct) => _lists.ReplaceAsync(current, ct),
                     current =>
                     {
@@ -270,7 +270,7 @@ public sealed class ContentService
         }
 
         var list = await DocumentUpdates.UpdateAsync(
-            ct => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, ct),
+            ct => DocumentUpdates.LiveAsync(token => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, token), list => list.DeletedAt, ct),
             (current, ct) => _lists.ReplaceAsync(current, ct),
             current =>
             {

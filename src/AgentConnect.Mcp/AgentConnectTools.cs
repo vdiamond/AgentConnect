@@ -84,11 +84,6 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "name", "description") is { } extra)
-        {
-            return extra;
-        }
-
         var nameError = ReadPatch(request, "name", name, false, out var nextName);
         if (nameError is not null)
         {
@@ -99,6 +94,11 @@ public sealed class AgentConnectTools
         if (descriptionError is not null)
         {
             return Error(descriptionError);
+        }
+
+        if (await AfterAccess(_workspaces.AccessAsync(caller, workspaceId, cancellationToken), request, "workspaceId", "name", "description").ConfigureAwait(false) is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _workspaces.UpdateAsync(caller, workspaceId, nextName, nextDescription, cancellationToken)).ConfigureAwait(false));
@@ -125,7 +125,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "pageSize", "continuation") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, null, PlatformAction.ListLists, cancellationToken), request, "workspaceId", "pageSize", "continuation").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -157,7 +157,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "name", "schema", "description") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, null, PlatformAction.CreateList, cancellationToken), request, "workspaceId", "name", "schema", "description").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -188,11 +188,6 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "listId", "name", "description") is { } extra)
-        {
-            return extra;
-        }
-
         var nameError = ReadPatch(request, "name", name, false, out var nextName);
         if (nameError is not null)
         {
@@ -203,6 +198,11 @@ public sealed class AgentConnectTools
         if (descriptionError is not null)
         {
             return Error(descriptionError);
+        }
+
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.UpdateList, cancellationToken), request, "workspaceId", "listId", "name", "description").ConfigureAwait(false) is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _content.UpdateListAsync(caller, workspaceId, listId, nextName, nextDescription, cancellationToken)).ConfigureAwait(false));
@@ -223,7 +223,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "listId") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.DeleteList, cancellationToken), request, "workspaceId", "listId").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -246,7 +246,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "listId") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.GetSchema, cancellationToken), request, "workspaceId", "listId").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -275,7 +275,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "listId", "schema") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.UpdateSchema, cancellationToken), request, "workspaceId", "listId", "schema").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -314,7 +314,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.QueryItems, cancellationToken), request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -352,7 +352,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "listId", "itemId") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.GetItem, cancellationToken), request, "workspaceId", "listId", "itemId").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -383,12 +383,18 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "listId", "data", "itemId") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.UpsertItem, cancellationToken), request, "workspaceId", "listId", "data", "itemId").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
 
-        var json = data is { } value && value.ValueKind != JsonValueKind.Undefined ? value.GetRawText() : null;
+        var dataElement = Read(request, "data", data);
+        if (dataElement.ValueKind == JsonValueKind.Null)
+        {
+            return Error(PlatformError.BadRequest("data: required"));
+        }
+
+        var json = dataElement.ValueKind == JsonValueKind.Undefined ? null : dataElement.GetRawText();
         return ToResult(await Guarded(() => _content.UpsertItemAsync(caller, workspaceId, listId, itemId, json, cancellationToken)).ConfigureAwait(false));
     }
 
@@ -408,7 +414,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "listId", "itemId") is { } extra)
+        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.DeleteItem, cancellationToken), request, "workspaceId", "listId", "itemId").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -437,11 +443,6 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "email", "role") is { } extra)
-        {
-            return extra;
-        }
-
         if (ReadMemberField(request, "email", email, "email: required", "email: invalid format") is not string emailText)
         {
             return Error(PlatformError.BadRequest(MemberFieldError(request, "email", email, "email: required", "email: invalid format")!));
@@ -450,6 +451,11 @@ public sealed class AgentConnectTools
         if (ReadMemberField(request, "role", role, "role: required", "role: invalid") is not string roleText)
         {
             return Error(PlatformError.BadRequest(MemberFieldError(request, "role", role, "role: required", "role: invalid")!));
+        }
+
+        if (await AfterAccess(_members.AccessAsync(caller, workspaceId, PlatformAction.AddWorkspaceMember, cancellationToken), request, "workspaceId", "email", "role").ConfigureAwait(false) is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _members.AddToWorkspaceAsync(caller, workspaceId, emailText, roleText, cancellationToken)).ConfigureAwait(false));
@@ -476,11 +482,6 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "email", "role") is { } extra)
-        {
-            return extra;
-        }
-
         if (ReadMemberField(request, "email", email, "email: required", "email: invalid format") is not string emailText)
         {
             return Error(PlatformError.BadRequest(MemberFieldError(request, "email", email, "email: required", "email: invalid format")!));
@@ -489,6 +490,11 @@ public sealed class AgentConnectTools
         if (ReadMemberField(request, "role", role, "role: required", "role: invalid") is not string roleText)
         {
             return Error(PlatformError.BadRequest(MemberFieldError(request, "role", role, "role: required", "role: invalid")!));
+        }
+
+        if (await AfterAccess(_members.AccessAsync(caller, workspaceId, PlatformAction.ChangeWorkspaceRole, cancellationToken), request, "workspaceId", "email", "role").ConfigureAwait(false) is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _members.ChangeRoleAsync(caller, workspaceId, emailText, roleText, cancellationToken)).ConfigureAwait(false));
@@ -513,14 +519,14 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "email") is { } extra)
-        {
-            return extra;
-        }
-
         if (ReadMemberField(request, "email", email, "email: required", "email: invalid format") is not string emailText)
         {
             return Error(PlatformError.BadRequest(MemberFieldError(request, "email", email, "email: required", "email: invalid format")!));
+        }
+
+        if (await AfterAccess(_members.AccessAsync(caller, workspaceId, PlatformAction.RemoveWorkspaceMember, cancellationToken), request, "workspaceId", "email").ConfigureAwait(false) is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _members.RemoveFromWorkspaceAsync(caller, workspaceId, emailText, cancellationToken)).ConfigureAwait(false));
@@ -547,7 +553,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "workspaceId", "pageSize", "continuation") is { } extra)
+        if (await AfterAccess(_members.AccessAsync(caller, workspaceId, PlatformAction.ListWorkspaceMembers, cancellationToken), request, "workspaceId", "pageSize", "continuation").ConfigureAwait(false) is { } extra)
         {
             return extra;
         }
@@ -631,7 +637,7 @@ public sealed class AgentConnectTools
     private static string? JsonText(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound)
     {
         var element = Read(request, name, bound);
-        return element.ValueKind == JsonValueKind.Undefined ? null : element.GetRawText();
+        return element.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : element.GetRawText();
     }
 
     private static string? TextArgument(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound)
@@ -679,6 +685,17 @@ public sealed class AgentConnectTools
         }
 
         return element.TryGetInt32(out number) && number >= 1;
+    }
+
+    private async Task<CallToolResult?> AfterAccess(Task<PlatformError?> access, RequestContext<CallToolRequestParams>? request, params string[] known)
+    {
+        var denied = await access.ConfigureAwait(false);
+        if (denied is not null)
+        {
+            return Error(denied);
+        }
+
+        return Extra(request, known);
     }
 
     private static CallToolResult? Extra(RequestContext<CallToolRequestParams>? request, params string[] known)

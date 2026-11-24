@@ -340,24 +340,55 @@ public sealed class V8SpecTests
 
         var api = _session.Platform.Api.Services.GetRequiredService<AgentConnectOptions>();
         var mcp = _session.Platform.Mcp.Services.GetRequiredService<AgentConnectOptions>();
+        var database = _session.Platform.Database;
         try
         {
-            _session.Platform.Database.ReplaceConflictsRemaining = 4;
-            var conflict = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + workspace + "/lists/" + list, new { name = "Renamed" }, owner.Token);
+            database.ReplaceConflictsRemaining = 3;
+            var renamed = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + workspace + "/lists/" + list, new { name = "Retried" }, owner.Token);
+            Assert.Equal(200, renamed.Status);
+            Assert.Equal("Retried", Json(renamed.Body).GetProperty("name").GetString());
+            Assert.Equal(0, database.ReplaceConflictsRemaining);
+
+            database.ReplaceConflictsRemaining = 4;
+            var conflict = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + workspace + "/lists/" + list, new { name = "Blocked" }, owner.Token);
             Assert.Equal(409, conflict.Status);
             Assert.Equal("$: conflict", Error(conflict.Body));
+            Assert.Equal(0, database.ReplaceConflictsRemaining);
+            Assert.Equal("Retried", Json((await _session.SendAsync(HttpMethod.Get, "/workspaces/" + workspace + "/lists", null, owner.Token)).Body).GetProperty("lists")[0].GetProperty("name").GetString());
+
             api.ConcurrencyRetries = 1;
             mcp.ConcurrencyRetries = 1;
-            _session.Platform.Database.ReplaceConflictsRemaining = 2;
-            var once = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + workspace + "/lists/" + list, new { name = "Again" }, owner.Token);
-            Assert.Equal(409, once.Status);
-            Assert.Equal("$: conflict", Error(once.Body));
+            database.ReplaceConflictsRemaining = 1;
+            var once = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + workspace + "/lists/" + list, new { name = "Once" }, owner.Token);
+            Assert.Equal(200, once.Status);
+            Assert.Equal("Once", Json(once.Body).GetProperty("name").GetString());
+            Assert.Equal(0, database.ReplaceConflictsRemaining);
+
+            database.ReplaceConflictsRemaining = 2;
+            var twice = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + workspace + "/lists/" + list, new { name = "Twice" }, owner.Token);
+            Assert.Equal(409, twice.Status);
+            Assert.Equal("$: conflict", Error(twice.Body));
+            Assert.Equal(0, database.ReplaceConflictsRemaining);
+
+            api.ConcurrencyRetries = 3;
+            mcp.ConcurrencyRetries = 3;
+            database.ReplaceConflictsRemaining = 3;
+            var sent = await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(owner.Email) + "/token/send", new { }, owner.Token);
+            Assert.Equal(200, sent.Status);
+            Assert.True(Json(sent.Body).GetProperty("emailSent").GetBoolean());
+            Assert.Equal(0, database.ReplaceConflictsRemaining);
+
+            database.ReplaceConflictsRemaining = 4;
+            var blocked = await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(owner.Email) + "/token/send", new { }, owner.Token);
+            Assert.Equal(409, blocked.Status);
+            Assert.Equal("$: conflict", Error(blocked.Body));
+            Assert.Equal(0, database.ReplaceConflictsRemaining);
         }
         finally
         {
             api.ConcurrencyRetries = 3;
             mcp.ConcurrencyRetries = 3;
-            _session.Platform.Database.ReplaceConflictsRemaining = 0;
+            database.ReplaceConflictsRemaining = 0;
         }
     }
 
@@ -421,25 +452,28 @@ public sealed class V8SpecTests
     public async Task EveryTool_RejectsAnUnknownArgument()
     {
         var owner = await _session.CreateTenantAsync("Unknown");
+        var workspace = await WorkspaceAsync(owner.Token);
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token);
+        var list = await ListAsync(owner.Token, workspace);
         var calls = new (string Name, Dictionary<string, object?> Args)[]
         {
             ("list_workspaces", new Dictionary<string, object?> { ["foo"] = 1 }),
-            ("update_workspace", new Dictionary<string, object?> { ["workspaceId"] = "w", ["foo"] = 1 }),
-            ("list_lists", new Dictionary<string, object?> { ["workspaceId"] = "w", ["foo"] = 1 }),
-            ("create_list", new Dictionary<string, object?> { ["workspaceId"] = "w", ["name"] = "n", ["schema"] = Session.Node("{}"), ["foo"] = 1 }),
-            ("update_list", new Dictionary<string, object?> { ["workspaceId"] = "w", ["listId"] = "l", ["foo"] = 1 }),
-            ("delete_list", new Dictionary<string, object?> { ["workspaceId"] = "w", ["listId"] = "l", ["foo"] = 1 }),
-            ("get_schema", new Dictionary<string, object?> { ["workspaceId"] = "w", ["listId"] = "l", ["foo"] = 1 }),
-            ("update_schema", new Dictionary<string, object?> { ["workspaceId"] = "w", ["listId"] = "l", ["schema"] = Session.Node("{}"), ["foo"] = 1 }),
-            ("query_items", new Dictionary<string, object?> { ["workspaceId"] = "w", ["listId"] = "l", ["shape"] = "ids", ["foo"] = 1 }),
-            ("get_item", new Dictionary<string, object?> { ["workspaceId"] = "w", ["listId"] = "l", ["itemId"] = "i", ["foo"] = 1 }),
-            ("upsert_item", new Dictionary<string, object?> { ["workspaceId"] = "w", ["listId"] = "l", ["data"] = Session.Node("{}"), ["foo"] = 1 }),
-            ("delete_item", new Dictionary<string, object?> { ["workspaceId"] = "w", ["listId"] = "l", ["itemId"] = "i", ["foo"] = 1 }),
-            ("invite_member", new Dictionary<string, object?> { ["workspaceId"] = "w", ["email"] = "a@example.com", ["role"] = "WorkspaceRead", ["foo"] = 1 }),
-            ("change_workspace_role", new Dictionary<string, object?> { ["workspaceId"] = "w", ["email"] = "a@example.com", ["role"] = "WorkspaceRead", ["foo"] = 1 }),
-            ("revoke_workspace_access", new Dictionary<string, object?> { ["workspaceId"] = "w", ["email"] = "a@example.com", ["foo"] = 1 }),
-            ("list_workspace_members", new Dictionary<string, object?> { ["workspaceId"] = "w", ["foo"] = 1 }),
-            ("set_tenant_owner", new Dictionary<string, object?> { ["email"] = "a@example.com", ["isTenantOwner"] = true, ["foo"] = 1 }),
+            ("update_workspace", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["foo"] = 1 }),
+            ("list_lists", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["foo"] = 1 }),
+            ("create_list", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["name"] = "n", ["schema"] = Session.Node("{}"), ["foo"] = 1 }),
+            ("update_list", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["foo"] = 1 }),
+            ("delete_list", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["foo"] = 1 }),
+            ("get_schema", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["foo"] = 1 }),
+            ("update_schema", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["schema"] = Session.Node("{}"), ["foo"] = 1 }),
+            ("query_items", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["shape"] = "ids", ["foo"] = 1 }),
+            ("get_item", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["itemId"] = "i", ["foo"] = 1 }),
+            ("upsert_item", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["data"] = Session.Node("{}"), ["foo"] = 1 }),
+            ("delete_item", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["itemId"] = "i", ["foo"] = 1 }),
+            ("invite_member", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = "a@example.com", ["role"] = "WorkspaceRead", ["foo"] = 1 }),
+            ("change_workspace_role", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = "a@example.com", ["role"] = "WorkspaceRead", ["foo"] = 1 }),
+            ("revoke_workspace_access", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = "a@example.com", ["foo"] = 1 }),
+            ("list_workspace_members", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["foo"] = 1 }),
+            ("set_tenant_owner", new Dictionary<string, object?> { ["email"] = owner.Email, ["isTenantOwner"] = true, ["foo"] = 1 }),
         };
         foreach (var call in calls)
         {
@@ -447,6 +481,26 @@ public sealed class V8SpecTests
             Assert.True(result.IsError);
             Assert.Equal("foo: unknown field", result.Text);
         }
+    }
+
+    [Fact]
+    [Trait("T", "T-74")]
+    public async Task UnknownArgument_WaitsUntilAccessSucceeds()
+    {
+        var owner = await _session.CreateTenantAsync("Hidden");
+        var workspace = await WorkspaceAsync(owner.Token);
+        var outsider = await _session.AddMemberAsync(owner.Token, "outsider");
+        await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(outsider) + "/send-invitation", new { }, owner.Token);
+        var token = Session.TokenFrom(_session.Platform.Email.For(outsider).Last().Body);
+        var hidden = await _session.ToolAsync(token, "query_items", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = "none",
+            ["shape"] = "ids",
+            ["foo"] = 1,
+        });
+        Assert.True(hidden.IsError);
+        Assert.Equal("$: not found", hidden.Text);
     }
 
     [Fact]
@@ -496,6 +550,29 @@ public sealed class V8SpecTests
             var updated = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + next + "/lists/" + list, new { name = "Moved" }, owner.Token);
             Assert.Equal(404, updated.Status);
             Assert.Equal("$: not found", Error(updated.Body));
+        }
+        finally
+        {
+            _session.Platform.Database.AfterListRead = null;
+        }
+
+        var softList = await ListAsync(owner.Token, next);
+        _session.Platform.Database.AfterListRead = () =>
+        {
+            _session.Platform.Database.AfterListRead = null;
+            var tenant = _session.Platform.Api.Services.GetRequiredService<ITenantRepository>().GetAsync(owner.TenantId, CancellationToken.None).GetAwaiter().GetResult();
+            var members = _session.Platform.Api.Services.GetRequiredService<IMemberRepository>().ListAsync(owner.TenantId, 20, null, CancellationToken.None).GetAwaiter().GetResult();
+            var member = members.Items.Single(item => EmailRules.Same(item.Email, owner.Email));
+            var content = _session.Platform.Api.Services.GetRequiredService<ContentService>();
+            var deleted = content.DeleteListAsync(new Caller(member, tenant!), next, softList, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.True(deleted.IsSuccess);
+        };
+        try
+        {
+            var updated = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + next + "/lists/" + softList, new { name = "Soft" }, owner.Token);
+            Assert.Equal(404, updated.Status);
+            Assert.Equal("$: not found", Error(updated.Body));
+            Assert.Equal(404, (await _session.SendAsync(HttpMethod.Get, "/workspaces/" + next + "/lists/" + softList + "/schema", null, owner.Token)).Status);
         }
         finally
         {
@@ -566,6 +643,35 @@ public sealed class V8SpecTests
         Assert.Equal("isTenantOwner: required", toolFlag.Text);
         var restFlag = await RawAsync(HttpMethod.Put, "/members/" + Uri.EscapeDataString(other) + "/tenant-owner", """{"isTenantOwner":null}""", owner.Token);
         Assert.Equal("isTenantOwner: required", Error(restFlag.Body));
+
+        var jsonNull = JsonSerializer.Deserialize<JsonElement>("null");
+        var createSchema = await _session.ToolAsync(owner.Token, "create_list", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["name"] = "Other",
+            ["schema"] = jsonNull,
+        });
+        Assert.Equal("schema: required", createSchema.Text);
+        var updateSchema = await _session.ToolAsync(owner.Token, "update_schema", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["schema"] = jsonNull,
+        });
+        Assert.Equal("schema: required", updateSchema.Text);
+        var data = await _session.ToolAsync(owner.Token, "upsert_item", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["data"] = jsonNull,
+        });
+        Assert.Equal("data: required", data.Text);
+        var postedList = await RawAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", """{"name":"Other","schema":null}""", owner.Token);
+        Assert.Equal("schema: required", Error(postedList.Body));
+        var unwrappedSchema = await RawAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/schema", "null", owner.Token);
+        Assert.Equal("$: expected Object, found Null", Error(unwrappedSchema.Body));
+        var unwrappedItem = await RawAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/items/z", "null", owner.Token);
+        Assert.Equal("$: expected Object, found Null", Error(unwrappedItem.Body));
     }
 
     private async Task<string> WorkspaceAsync(string token)

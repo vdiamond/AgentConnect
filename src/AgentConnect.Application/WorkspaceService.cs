@@ -228,7 +228,7 @@ public sealed class WorkspaceService
             try
             {
                 workspace = await DocumentUpdates.UpdateAsync(
-                    ct => _workspaces.GetAsync(caller.Tenant.Id, workspaceId, ct),
+                    ct => DocumentUpdates.LiveAsync(token => _workspaces.GetAsync(caller.Tenant.Id, workspaceId, token), current => current.DeletedAt, ct),
                     (current, ct) => _workspaces.ReplaceAsync(current, ct),
                     current =>
                     {

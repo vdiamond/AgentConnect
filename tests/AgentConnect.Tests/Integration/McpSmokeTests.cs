@@ -16,7 +16,7 @@ public sealed class McpSmokeTests
 
     [Fact]
     [Trait("T", "T-26")]
-    public async Task Mcp_ExposesTheSixteenTools()
+    public async Task Mcp_ExposesTheSeventeenTools()
     {
         var email = "mcp-owner@example.com";
         var created = await _platform.SendAsync(HttpMethod.Post, "/tenants", new { name = "Mcp", email }, null, admin: true);
