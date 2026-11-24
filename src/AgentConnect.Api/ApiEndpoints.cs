@@ -64,7 +64,20 @@ public static class ApiEndpoints
             return;
         }
 
-        var result = await tenants.CreateAsync(Text(body, "name"), Text(body, "email"), http.RequestAborted).ConfigureAwait(false);
+        if (await UnknownAsync(http, body, "name", "email").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var name = RequiredName(body, out var nameError);
+        var email = MemberField(body, "email", "email: required", "email: invalid format", out var emailError);
+        if (nameError is not null || emailError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(nameError ?? emailError!)).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await tenants.CreateAsync(name, email, http.RequestAborted).ConfigureAwait(false);
         await WriteAsync(http, result).ConfigureAwait(false);
     }
 
@@ -173,6 +186,11 @@ public static class ApiEndpoints
             return;
         }
 
+        if (await UnknownAsync(http, body, "email").ConfigureAwait(false))
+        {
+            return;
+        }
+
         var email = MemberField(body, "email", "email: required", "email: invalid format", out var emailError);
         if (emailError is not null)
         {
@@ -198,6 +216,11 @@ public static class ApiEndpoints
 
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
+        {
+            return;
+        }
+
+        if (await UnknownAsync(http, body, "isTenantOwner").ConfigureAwait(false))
         {
             return;
         }
@@ -251,6 +274,18 @@ public static class ApiEndpoints
             return;
         }
 
+        if (await UnknownAsync(http, body, "name", "description", "members").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var name = RequiredName(body, out var nameError);
+        if (nameError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(nameError)).ConfigureAwait(false);
+            return;
+        }
+
         var initial = new List<InitialRole>();
         if (body.TryGetProperty("members", out var members) && members.ValueKind != JsonValueKind.Null)
         {
@@ -262,11 +297,22 @@ public static class ApiEndpoints
 
             foreach (var entry in members.EnumerateArray())
             {
+                if (entry.ValueKind != JsonValueKind.Object)
+                {
+                    await WriteErrorAsync(http, PlatformError.BadRequest("members: expected Object, found " + JsonKinds.Of(entry))).ConfigureAwait(false);
+                    return;
+                }
+
+                if (await UnknownAsync(http, entry, "email", "role").ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 initial.Add(new InitialRole(Text(entry, "email"), Text(entry, "role")));
             }
         }
 
-        var result = await workspaces.CreateAsync(Caller(http), Text(body, "name"), Text(body, "description"), body.TryGetProperty("description", out _), initial, http.RequestAborted).ConfigureAwait(false);
+        var result = await workspaces.CreateAsync(Caller(http), name, Text(body, "description"), body.TryGetProperty("description", out _) && body.GetProperty("description").ValueKind != JsonValueKind.Null, initial, http.RequestAborted).ConfigureAwait(false);
         await WriteAsync(http, result).ConfigureAwait(false);
     }
 
@@ -290,6 +336,11 @@ public static class ApiEndpoints
 
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
+        {
+            return;
+        }
+
+        if (await UnknownAsync(http, body, "name", "description").ConfigureAwait(false))
         {
             return;
         }
@@ -323,6 +374,11 @@ public static class ApiEndpoints
             return;
         }
 
+        if (await UnknownAsync(http, body, "email", "role").ConfigureAwait(false))
+        {
+            return;
+        }
+
         var email = MemberField(body, "email", "email: required", "email: invalid format", out var emailError);
         var role = MemberField(body, "role", "role: required", "role: invalid", out var roleError);
         if (emailError is not null || roleError is not null)
@@ -352,6 +408,11 @@ public static class ApiEndpoints
             return;
         }
 
+        if (await UnknownAsync(http, body, "role").ConfigureAwait(false))
+        {
+            return;
+        }
+
         var role = MemberField(body, "role", "role: required", "role: invalid", out var roleError);
         if (roleError is not null)
         {
@@ -375,13 +436,25 @@ public static class ApiEndpoints
             return;
         }
 
+        if (await UnknownAsync(http, body, "name", "description", "schema").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var name = RequiredName(body, out var nameError);
+        if (nameError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(nameError)).ConfigureAwait(false);
+            return;
+        }
+
         string? schema = null;
         if (body.TryGetProperty("schema", out var schemaElement) && schemaElement.ValueKind != JsonValueKind.Null)
         {
             schema = schemaElement.GetRawText();
         }
 
-        var result = await content.CreateListAsync(Caller(http), id, Text(body, "name"), Text(body, "description"), body.TryGetProperty("description", out _), schema, http.RequestAborted).ConfigureAwait(false);
+        var result = await content.CreateListAsync(Caller(http), id, name, Text(body, "description"), body.TryGetProperty("description", out _) && body.GetProperty("description").ValueKind != JsonValueKind.Null, schema, http.RequestAborted).ConfigureAwait(false);
         await WriteAsync(http, result).ConfigureAwait(false);
     }
 
@@ -394,6 +467,11 @@ public static class ApiEndpoints
 
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
+        {
+            return;
+        }
+
+        if (await UnknownAsync(http, body, "name", "description").ConfigureAwait(false))
         {
             return;
         }
@@ -545,6 +623,36 @@ public static class ApiEndpoints
         }
 
         return null;
+    }
+
+    private static string? RequiredName(JsonElement body, out string? error)
+    {
+        if (!body.TryGetProperty("name", out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            error = "name: required";
+            return null;
+        }
+
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            error = "name: expected String, found " + JsonKinds.Of(value);
+            return null;
+        }
+
+        error = null;
+        return value.GetString();
+    }
+
+    private static async Task<bool> UnknownAsync(HttpContext http, JsonElement body, params string[] allowed)
+    {
+        var name = Unknown(body, allowed);
+        if (name is null)
+        {
+            return false;
+        }
+
+        await WriteErrorAsync(http, PlatformError.BadRequest(name + ": unknown field")).ConfigureAwait(false);
+        return true;
     }
 
     private static string? MemberField(JsonElement body, string name, string missing, string wrongKind, out string? error)

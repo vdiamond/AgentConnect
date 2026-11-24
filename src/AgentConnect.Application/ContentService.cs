@@ -128,7 +128,7 @@ public sealed class ContentService
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The list.</returns>
-    public async Task<OperationResult<ListView>> UpdateListAsync(Caller caller, string workspaceId, string listId, OptionalText name, OptionalText description, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<ListView>> UpdateListAsync(Caller caller, string workspaceId, string? listId, OptionalText name, OptionalText description, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var gate = await GateAsync(caller, workspaceId, listId, PlatformAction.UpdateList, false, cancellationToken).ConfigureAwait(false);
         if (gate.Error is not null)
@@ -198,7 +198,7 @@ public sealed class ContentService
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The confirmation.</returns>
-    public async Task<OperationResult<DeletedResult>> DeleteListAsync(Caller caller, string workspaceId, string listId, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<DeletedResult>> DeleteListAsync(Caller caller, string workspaceId, string? listId, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var gate = await GateAsync(caller, workspaceId, listId, PlatformAction.DeleteList, false, cancellationToken).ConfigureAwait(false);
         if (gate.Error is not null)
@@ -209,6 +209,11 @@ public sealed class ContentService
         if (PlatformSupport.AfterGate(afterGate) is { } blocked)
         {
             return OperationResult<DeletedResult>.Fail(blocked);
+        }
+
+        if (listId is null)
+        {
+            return OperationResult<DeletedResult>.Fail(PlatformError.BadRequest("listId: required"));
         }
 
         await DocumentUpdates.UpdateAsync(
@@ -267,7 +272,7 @@ public sealed class ContentService
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The schema.</returns>
-    public async Task<OperationResult<SchemaView>> GetSchemaAsync(Caller caller, string workspaceId, string listId, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<SchemaView>> GetSchemaAsync(Caller caller, string workspaceId, string? listId, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var gate = await GateAsync(caller, workspaceId, listId, PlatformAction.GetSchema, false, cancellationToken).ConfigureAwait(false);
         if (gate.Error is not null)
@@ -292,7 +297,7 @@ public sealed class ContentService
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The new version.</returns>
-    public async Task<OperationResult<SchemaView>> UpdateSchemaAsync(Caller caller, string workspaceId, string listId, string? schemaJson, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<SchemaView>> UpdateSchemaAsync(Caller caller, string workspaceId, string? listId, string? schemaJson, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var gate = await GateAsync(caller, workspaceId, listId, PlatformAction.UpdateSchema, false, cancellationToken).ConfigureAwait(false);
         if (gate.Error is not null)
@@ -303,6 +308,11 @@ public sealed class ContentService
         if (PlatformSupport.AfterGate(afterGate) is { } blocked)
         {
             return OperationResult<SchemaView>.Fail(blocked);
+        }
+
+        if (listId is null)
+        {
+            return OperationResult<SchemaView>.Fail(PlatformError.BadRequest("listId: required"));
         }
 
         if (string.IsNullOrWhiteSpace(schemaJson))
@@ -349,7 +359,7 @@ public sealed class ContentService
     public async Task<OperationResult<ItemPageResult>> QueryItemsAsync(
         Caller caller,
         string workspaceId,
-        string listId,
+        string? listId,
         string? shape,
         JsonElement schemaVersion,
         JsonElement where,
@@ -370,6 +380,11 @@ public sealed class ContentService
         if (PlatformSupport.AfterGate(afterGate) is { } blocked)
         {
             return OperationResult<ItemPageResult>.Fail(blocked);
+        }
+
+        if (listId is null)
+        {
+            return OperationResult<ItemPageResult>.Fail(PlatformError.BadRequest("listId: required"));
         }
 
         var parsed = ItemQueryParser.Parse(SchemaIndex.Load(gate.Value!.Schema), gate.Value.SchemaVersion, caller.Tenant.Id, workspaceId, listId, shape, schemaVersion, where, orderBy, unknownPaths, 1, null);
@@ -421,12 +436,44 @@ public sealed class ContentService
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The item.</returns>
-    public async Task<OperationResult<ItemView>> GetItemAsync(Caller caller, string workspaceId, string listId, string itemId, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<ItemView>> GetItemAsync(Caller caller, string workspaceId, string? listId, string? itemId, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var gate = await GateAsync(caller, workspaceId, listId, PlatformAction.GetItem, true, cancellationToken).ConfigureAwait(false);
         if (gate.Error is not null)
         {
             return OperationResult<ItemView>.Fail(gate.Error);
+        }
+
+        if (listId is null)
+        {
+            var deniedList = Permissions.AuthorizeWorkspace(caller, workspaceId, PlatformAction.GetItem, null, null, null);
+            if (deniedList is not null)
+            {
+                return OperationResult<ItemView>.Fail(deniedList);
+            }
+
+            if (PlatformSupport.AfterGate(afterGate) is { } missingList)
+            {
+                return OperationResult<ItemView>.Fail(missingList);
+            }
+
+            return OperationResult<ItemView>.Fail(PlatformError.BadRequest("listId: required"));
+        }
+
+        if (itemId is null)
+        {
+            var deniedItem = Permissions.AuthorizeWorkspace(caller, workspaceId, PlatformAction.GetItem, null, null, null);
+            if (deniedItem is not null)
+            {
+                return OperationResult<ItemView>.Fail(deniedItem);
+            }
+
+            if (PlatformSupport.AfterGate(afterGate) is { } missingItem)
+            {
+                return OperationResult<ItemView>.Fail(missingItem);
+            }
+
+            return OperationResult<ItemView>.Fail(PlatformError.BadRequest("itemId: required"));
         }
 
         var idOk = ItemIdRules.IsValid(itemId);
@@ -472,7 +519,7 @@ public sealed class ContentService
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The id and stored version.</returns>
-    public async Task<OperationResult<ItemWriteResult>> UpsertItemAsync(Caller caller, string workspaceId, string listId, string? itemId, string? dataJson, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<ItemWriteResult>> UpsertItemAsync(Caller caller, string workspaceId, string? listId, string? itemId, string? dataJson, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var gate = await GateAsync(caller, workspaceId, listId, PlatformAction.UpsertItem, false, cancellationToken).ConfigureAwait(false);
         if (gate.Error is not null)
@@ -483,6 +530,11 @@ public sealed class ContentService
         if (PlatformSupport.AfterGate(afterGate) is { } blocked)
         {
             return OperationResult<ItemWriteResult>.Fail(blocked);
+        }
+
+        if (listId is null)
+        {
+            return OperationResult<ItemWriteResult>.Fail(PlatformError.BadRequest("listId: required"));
         }
 
         var id = itemId ?? PlatformSupport.NewId();
@@ -555,12 +607,44 @@ public sealed class ContentService
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The confirmation.</returns>
-    public async Task<OperationResult<DeletedResult>> DeleteItemAsync(Caller caller, string workspaceId, string listId, string itemId, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<DeletedResult>> DeleteItemAsync(Caller caller, string workspaceId, string? listId, string? itemId, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var gate = await GateAsync(caller, workspaceId, listId, PlatformAction.DeleteItem, true, cancellationToken).ConfigureAwait(false);
         if (gate.Error is not null)
         {
             return OperationResult<DeletedResult>.Fail(gate.Error);
+        }
+
+        if (listId is null)
+        {
+            var deniedList = Permissions.AuthorizeWorkspace(caller, workspaceId, PlatformAction.DeleteItem, null, null, null);
+            if (deniedList is not null)
+            {
+                return OperationResult<DeletedResult>.Fail(deniedList);
+            }
+
+            if (PlatformSupport.AfterGate(afterGate) is { } missingList)
+            {
+                return OperationResult<DeletedResult>.Fail(missingList);
+            }
+
+            return OperationResult<DeletedResult>.Fail(PlatformError.BadRequest("listId: required"));
+        }
+
+        if (itemId is null)
+        {
+            var deniedItem = Permissions.AuthorizeWorkspace(caller, workspaceId, PlatformAction.DeleteItem, null, null, null);
+            if (deniedItem is not null)
+            {
+                return OperationResult<DeletedResult>.Fail(deniedItem);
+            }
+
+            if (PlatformSupport.AfterGate(afterGate) is { } missingItem)
+            {
+                return OperationResult<DeletedResult>.Fail(missingItem);
+            }
+
+            return OperationResult<DeletedResult>.Fail(PlatformError.BadRequest("itemId: required"));
         }
 
         var idOk = ItemIdRules.IsValid(itemId);

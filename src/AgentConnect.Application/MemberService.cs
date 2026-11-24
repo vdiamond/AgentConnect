@@ -245,6 +245,7 @@ public sealed class MemberService
         {
             return OperationResult<MemberResult>.Fail(blocked);
         }
+
         if (stored.IsTenantOwner != isTenantOwner)
         {
             stored = await UpdateMemberAsync(stored.TenantId, stored.Id, current =>

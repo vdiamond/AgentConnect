@@ -8,7 +8,7 @@ using ModelContextProtocol.Server;
 namespace AgentConnect;
 
 /// <summary>
-/// The 16 MCP tools from FR-33. They call the same services as the REST API.
+/// The 17 MCP tools from FR-33. They call the same services as the REST API.
 /// </summary>
 [McpServerToolType]
 public sealed class AgentConnectTools
@@ -212,11 +212,7 @@ public sealed class AgentConnectTools
             return Error(workspaceError);
         }
 
-        if (RequiredArgument(request, "listId", listId, out var listText) is { } listError)
-        {
-            return Error(listError);
-        }
-
+        var listGate = AfterId(request, "listId", listId, out var listText, "workspaceId", "listId", "name", "description");
         var nameError = ReadPatch(request, "name", name, false, out var nextName);
         if (nameError is not null)
         {
@@ -229,7 +225,7 @@ public sealed class AgentConnectTools
             return Error(descriptionError);
         }
 
-        return ToResult(await Guarded(() => _content.UpdateListAsync(caller, workspaceText, listText, nextName, nextDescription, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId", "name", "description"))).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.UpdateListAsync(caller, workspaceText, listText, nextName, nextDescription, cancellationToken, listGate)).ConfigureAwait(false));
     }
 
     /// <summary>Deletes a list.</summary>
@@ -252,12 +248,8 @@ public sealed class AgentConnectTools
             return Error(workspaceError);
         }
 
-        if (RequiredArgument(request, "listId", listId, out var listText) is { } listError)
-        {
-            return Error(listError);
-        }
-
-        return ToResult(await Guarded(() => _content.DeleteListAsync(caller, workspaceText, listText, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId"))).ConfigureAwait(false));
+        var listGate = AfterId(request, "listId", listId, out var listText, "workspaceId", "listId");
+        return ToResult(await Guarded(() => _content.DeleteListAsync(caller, workspaceText, listText, cancellationToken, listGate)).ConfigureAwait(false));
     }
 
     /// <summary>Reads a list schema.</summary>
@@ -280,12 +272,8 @@ public sealed class AgentConnectTools
             return Error(workspaceError);
         }
 
-        if (RequiredArgument(request, "listId", listId, out var listText) is { } listError)
-        {
-            return Error(listError);
-        }
-
-        return ToResult(await Guarded(() => _content.GetSchemaAsync(caller, workspaceText, listText, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId"))).ConfigureAwait(false));
+        var listGate = AfterId(request, "listId", listId, out var listText, "workspaceId", "listId");
+        return ToResult(await Guarded(() => _content.GetSchemaAsync(caller, workspaceText, listText, cancellationToken, listGate)).ConfigureAwait(false));
     }
 
     /// <summary>Replaces a list schema.</summary>
@@ -314,12 +302,8 @@ public sealed class AgentConnectTools
             return Error(workspaceError);
         }
 
-        if (RequiredArgument(request, "listId", listId, out var listText) is { } listError)
-        {
-            return Error(listError);
-        }
-
-        return ToResult(await Guarded(() => _content.UpdateSchemaAsync(caller, workspaceText, listText, JsonText(request, "schema", schema), cancellationToken, UnknownAfterGate(request, "workspaceId", "listId", "schema"))).ConfigureAwait(false));
+        var listGate = AfterId(request, "listId", listId, out var listText, "workspaceId", "listId", "schema");
+        return ToResult(await Guarded(() => _content.UpdateSchemaAsync(caller, workspaceText, listText, JsonText(request, "schema", schema), cancellationToken, listGate)).ConfigureAwait(false));
     }
 
     /// <summary>Queries items.</summary>
@@ -358,11 +342,7 @@ public sealed class AgentConnectTools
             return Error(workspaceError);
         }
 
-        if (RequiredArgument(request, "listId", listId, out var listText) is { } listError)
-        {
-            return Error(listError);
-        }
-
+        var listGate = AfterId(request, "listId", listId, out var listText, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation");
         var (size, specified, token) = Page(request, pageSize, continuation);
         var result = await Guarded(() => _content.QueryItemsAsync(
             caller,
@@ -377,7 +357,7 @@ public sealed class AgentConnectTools
             specified,
             token,
             cancellationToken,
-            UnknownAfterGate(request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation"))).ConfigureAwait(false);
+            listGate)).ConfigureAwait(false);
         return ToResult(result);
     }
 
@@ -402,17 +382,10 @@ public sealed class AgentConnectTools
             return Error(workspaceError);
         }
 
-        if (RequiredArgument(request, "listId", listId, out var listText) is { } listError)
-        {
-            return Error(listError);
-        }
-
-        if (RequiredArgument(request, "itemId", itemId, out var itemText) is { } itemError)
-        {
-            return Error(itemError);
-        }
-
-        return ToResult(await Guarded(() => _content.GetItemAsync(caller, workspaceText, listText, itemText, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId", "itemId"))).ConfigureAwait(false));
+        var listProblem = RequiredArgument(request, "listId", listId, out var listValue);
+        var itemProblem = RequiredArgument(request, "itemId", itemId, out var itemValue);
+        var unknown = UnknownAfterGate(request, "workspaceId", "listId", "itemId");
+        return ToResult(await Guarded(() => _content.GetItemAsync(caller, workspaceText, listProblem is null ? listValue : null, itemProblem is null ? itemValue : null, cancellationToken, () => listProblem ?? itemProblem ?? unknown())).ConfigureAwait(false));
     }
 
     /// <summary>Creates or replaces an item.</summary>
@@ -443,30 +416,28 @@ public sealed class AgentConnectTools
             return Error(workspaceError);
         }
 
-        if (RequiredArgument(request, "listId", listId, out var listText) is { } listError)
-        {
-            return Error(listError);
-        }
-
-        string? itemText = null;
+        var listProblem = RequiredArgument(request, "listId", listId, out var listValue);
+        PlatformError? itemProblem = null;
+        string? itemForCall = null;
         var itemElement = Read(request, "itemId", itemId);
         if (itemElement.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null))
         {
-            if (RequiredArgument(request, "itemId", itemId, out itemText) is { } itemError)
+            itemProblem = RequiredArgument(request, "itemId", itemId, out var itemValue);
+            if (itemProblem is null)
             {
-                return Error(itemError);
+                itemForCall = itemValue;
             }
         }
 
         var dataElement = Read(request, "data", data);
         var json = dataElement.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : dataElement.GetRawText();
-        var afterGate = UnknownAfterGate(request, "workspaceId", "listId", "data", "itemId");
-        return ToResult(await Guarded(() => _content.UpsertItemAsync(caller, workspaceText, listText, itemText, json, cancellationToken, () =>
+        var unknown = UnknownAfterGate(request, "workspaceId", "listId", "data", "itemId");
+        return ToResult(await Guarded(() => _content.UpsertItemAsync(caller, workspaceText, listProblem is null ? listValue : null, itemForCall, json, cancellationToken, () =>
         {
-            var unknown = afterGate();
-            if (unknown is not null)
+            var idError = listProblem ?? itemProblem ?? unknown();
+            if (idError is not null)
             {
-                return unknown;
+                return idError;
             }
 
             return dataElement.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
@@ -496,17 +467,10 @@ public sealed class AgentConnectTools
             return Error(workspaceError);
         }
 
-        if (RequiredArgument(request, "listId", listId, out var listText) is { } listError)
-        {
-            return Error(listError);
-        }
-
-        if (RequiredArgument(request, "itemId", itemId, out var itemText) is { } itemError)
-        {
-            return Error(itemError);
-        }
-
-        return ToResult(await Guarded(() => _content.DeleteItemAsync(caller, workspaceText, listText, itemText, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId", "itemId"))).ConfigureAwait(false));
+        var listProblem = RequiredArgument(request, "listId", listId, out var listValue);
+        var itemProblem = RequiredArgument(request, "itemId", itemId, out var itemValue);
+        var unknown = UnknownAfterGate(request, "workspaceId", "listId", "itemId");
+        return ToResult(await Guarded(() => _content.DeleteItemAsync(caller, workspaceText, listProblem is null ? listValue : null, itemProblem is null ? itemValue : null, cancellationToken, () => listProblem ?? itemProblem ?? unknown())).ConfigureAwait(false));
     }
 
     /// <summary>Adds an email to a workspace.</summary>
@@ -767,6 +731,14 @@ public sealed class AgentConnectTools
         }
 
         return element.TryGetInt32(out number) && number >= 1;
+    }
+
+    private static Func<PlatformError?> AfterId(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound, out string? text, params string[] known)
+    {
+        var problem = RequiredArgument(request, name, bound, out var value);
+        text = problem is null ? value : null;
+        var unknown = UnknownAfterGate(request, known);
+        return () => problem ?? unknown();
     }
 
     private static PlatformError? RequiredArgument(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound, out string text)

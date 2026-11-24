@@ -977,6 +977,60 @@ public sealed class V8SpecTests
         }
     }
 
+    [Fact]
+    [Trait("T", "T-42")]
+    [Trait("T", "T-46")]
+    public async Task TypedNamesUnknownKeysAndIdOrder_MatchTheSpec()
+    {
+        var owner = await _session.CreateTenantAsync("Typed");
+        var workspace = await WorkspaceAsync(owner.Token);
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token);
+        var list = await ListAsync(owner.Token, workspace);
+        var reader = await _session.AddMemberAsync(owner.Token, "reader");
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = reader, role = "WorkspaceRead" }, owner.Token);
+        await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(reader) + "/send-invitation", new { }, owner.Token);
+        var readerToken = Session.TokenFrom(_session.Platform.Email.For(reader).Last().Body);
+        var outsider = await _session.AddMemberAsync(owner.Token, "outsider");
+        await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(outsider) + "/send-invitation", new { }, owner.Token);
+        var outsiderToken = Session.TokenFrom(_session.Platform.Email.For(outsider).Last().Body);
+        var jsonNull = JsonSerializer.Deserialize<JsonElement>("null");
+
+        var emailNumber = await RawAdminAsync("""{"name":"X","email":5}""");
+        Assert.Equal("email: invalid format", Error(emailNumber.Body));
+        var tenantName = await RawAdminAsync("""{"name":5,"email":"n@example.com"}""");
+        Assert.Equal("name: expected String, found Number", Error(tenantName.Body));
+        var workspaceName = await RawAsync(HttpMethod.Post, "/workspaces", """{"name":5}""", owner.Token);
+        Assert.Equal("name: expected String, found Number", Error(workspaceName.Body));
+        var listName = await RawAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", """{"name":5,"schema":{"properties":[]}}""", owner.Token);
+        Assert.Equal("name: expected String, found Number", Error(listName.Body));
+
+        var readerList = await _session.ToolAsync(readerToken, "update_list", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = jsonNull,
+        });
+        Assert.Equal("$: not allowed", readerList.Text);
+        var hiddenList = await _session.ToolAsync(outsiderToken, "update_list", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = jsonNull,
+        });
+        Assert.Equal("$: not found", hiddenList.Text);
+
+        var memberFoo = await RawAsync(HttpMethod.Post, "/members", """{"email":"z@example.com","foo":1}""", owner.Token);
+        Assert.Equal("foo: unknown field", Error(memberFoo.Body));
+        var patchFoo = await RawAsync(HttpMethod.Patch, "/workspaces/" + workspace, """{"foo":1}""", owner.Token);
+        Assert.Equal("foo: unknown field", Error(patchFoo.Body));
+        var hiddenFoo = await RawAsync(HttpMethod.Patch, "/workspaces/" + workspace, """{"foo":1}""", outsiderToken);
+        Assert.Equal(404, hiddenFoo.Status);
+        Assert.Equal("$: not found", Error(hiddenFoo.Body));
+        var listFoo = await RawAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", """{"name":"Named","schema":{"properties":[]},"foo":1}""", owner.Token);
+        Assert.Equal("foo: unknown field", Error(listFoo.Body));
+        var other = await _session.AddMemberAsync(owner.Token, "flagged");
+        var ownerFoo = await RawAsync(HttpMethod.Put, "/members/" + Uri.EscapeDataString(other) + "/tenant-owner", """{"isTenantOwner":true,"foo":1}""", owner.Token);
+        Assert.Equal("foo: unknown field", Error(ownerFoo.Body));
+    }
+
     private static Dictionary<string, object?> ArgumentsFor(string tool, string workspace, string list, string email)
     {
         var arguments = new Dictionary<string, object?>();
