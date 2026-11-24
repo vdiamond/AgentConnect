@@ -70,7 +70,11 @@ public sealed class MemberService
         }
 
         var member = CreateMember(caller.Tenant.Id, normalized, false);
-        await _members.CreateAsync(member, cancellationToken).ConfigureAwait(false);
+        var duplicate = await Unique.CreateAsync(ct => _members.CreateAsync(member, ct), "email: already exists", cancellationToken).ConfigureAwait(false);
+        if (duplicate is not null)
+        {
+            return OperationResult<MemberResult>.Fail(duplicate);
+        }
         Audit(caller.Member.Id, AuditActions.MemberAdded, ("tenantId", caller.Tenant.Id), ("memberId", member.Id));
         return OperationResult<MemberResult>.Ok(ToResult(member));
     }
@@ -397,6 +401,23 @@ public sealed class MemberService
         return AssignAsync(caller, workspace, email, storedRole, cancellationToken);
     }
 
+    /// <summary>Checks that the caller may perform a workspace action before the body is read. FR-42.</summary>
+    /// <param name="caller">The caller.</param>
+    /// <param name="workspaceId">The workspace id.</param>
+    /// <param name="action">The action.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The 404 or 403, or null when the body may be read.</returns>
+    public async Task<PlatformError?> AccessAsync(Caller caller, string workspaceId, PlatformAction action, CancellationToken cancellationToken)
+    {
+        var workspace = await LiveWorkspaceAsync(caller, workspaceId, cancellationToken).ConfigureAwait(false);
+        if (workspace.Error is not null)
+        {
+            return workspace.Error;
+        }
+
+        return Permissions.AuthorizeWorkspace(caller, workspaceId, action, null, null, null);
+    }
+
     #region private
 
     private readonly IMemberRepository _members;
@@ -416,7 +437,11 @@ public sealed class MemberService
         {
             member = CreateMember(caller.Tenant.Id, email, false);
             member.WorkspaceRoles[workspace.Id] = storedRole;
-            await _members.CreateAsync(member, cancellationToken).ConfigureAwait(false);
+            var duplicate = await Unique.CreateAsync(ct => _members.CreateAsync(member, ct), "email: already exists", cancellationToken).ConfigureAwait(false);
+            if (duplicate is not null)
+            {
+                return OperationResult<RoleAssignmentResult>.Fail(duplicate);
+            }
             Audit(caller.Member.Id, AuditActions.MemberAdded, ("tenantId", caller.Tenant.Id), ("memberId", member.Id));
         }
         else

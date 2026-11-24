@@ -84,6 +84,13 @@ public sealed class StorageConflictException : Exception
 }
 
 /// <summary>
+/// A unique email or name is already stored. The create or rename lost the race.
+/// </summary>
+public sealed class DuplicateValueException : Exception
+{
+}
+
+/// <summary>
 /// Reads and writes Tenant documents.
 /// </summary>
 public interface ITenantRepository

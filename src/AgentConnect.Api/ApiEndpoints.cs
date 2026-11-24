@@ -114,6 +114,11 @@ public static class ApiEndpoints
 
     private static async Task PatchTenantAsync(HttpContext http, TenantService tenants)
     {
+        if (await DeniedAsync(http, Permissions.AuthorizeTenant(Caller(http), PlatformAction.SetTenantSettings, null)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
         {
@@ -156,6 +161,11 @@ public static class ApiEndpoints
 
     private static async Task AddMemberAsync(HttpContext http, MemberService members)
     {
+        if (await DeniedAsync(http, Permissions.AuthorizeTenant(Caller(http), PlatformAction.AddTenantMember, null)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
         {
@@ -193,6 +203,11 @@ public static class ApiEndpoints
 
     private static async Task CreateWorkspaceAsync(HttpContext http, WorkspaceService workspaces)
     {
+        if (await DeniedAsync(http, Permissions.AuthorizeTenant(Caller(http), PlatformAction.CreateWorkspace, null)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
         {
@@ -231,9 +246,20 @@ public static class ApiEndpoints
 
     private static async Task PatchWorkspaceAsync(HttpContext http, string id, WorkspaceService workspaces)
     {
+        if (await DeniedAsync(http, await workspaces.AccessAsync(Caller(http), id, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
         {
+            return;
+        }
+
+        if (StringFieldError(body, "name", "description") is string fieldError)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(fieldError)).ConfigureAwait(false);
             return;
         }
 
@@ -249,6 +275,11 @@ public static class ApiEndpoints
 
     private static async Task AddWorkspaceMemberAsync(HttpContext http, string id, MemberService members)
     {
+        if (await DeniedAsync(http, await members.AccessAsync(Caller(http), id, PlatformAction.AddWorkspaceMember, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
         {
@@ -265,6 +296,11 @@ public static class ApiEndpoints
 
     private static async Task ChangeRoleAsync(HttpContext http, string id, string email, MemberService members)
     {
+        if (await DeniedAsync(http, await members.AccessAsync(Caller(http), id, PlatformAction.ChangeWorkspaceRole, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
         {
@@ -276,6 +312,11 @@ public static class ApiEndpoints
 
     private static async Task CreateListAsync(HttpContext http, string id, ContentService content)
     {
+        if (await DeniedAsync(http, await content.AccessAsync(Caller(http), id, null, PlatformAction.CreateList, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
         {
@@ -294,9 +335,20 @@ public static class ApiEndpoints
 
     private static async Task PatchListAsync(HttpContext http, string id, string listId, ContentService content)
     {
+        if (await DeniedAsync(http, await content.AccessAsync(Caller(http), id, listId, PlatformAction.UpdateList, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var parsed = await TryObjectAsync(http).ConfigureAwait(false);
         if (parsed is not JsonElement body)
         {
+            return;
+        }
+
+        if (StringFieldError(body, "name", "description") is string fieldError)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(fieldError)).ConfigureAwait(false);
             return;
         }
 
@@ -328,6 +380,11 @@ public static class ApiEndpoints
 
     private static async Task QueryItemsAsync(HttpContext http, string id, string listId, ContentService content)
     {
+        if (await DeniedAsync(http, await content.AccessAsync(Caller(http), id, listId, PlatformAction.QueryItems, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false))
+        {
+            return;
+        }
+
         var (size, specified) = PageSize(http);
         if (!QueryInput.TryRead(http.Request.Query["query"].FirstOrDefault(), out var schemaVersion, out var where, out var orderBy, out var unknown, out var error))
         {
@@ -410,7 +467,36 @@ public static class ApiEndpoints
             return new OptionalText(false, null);
         }
 
-        return new OptionalText(true, value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText());
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            return new OptionalText(false, null);
+        }
+
+        return new OptionalText(true, value.GetString());
+    }
+
+    private static string? StringFieldError(JsonElement body, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (body.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.String)
+            {
+                return name + ": expected String, found " + JsonKinds.Of(value);
+            }
+        }
+
+        return null;
+    }
+
+    private static async Task<bool> DeniedAsync(HttpContext http, PlatformError? error)
+    {
+        if (error is null)
+        {
+            return false;
+        }
+
+        await WriteErrorAsync(http, error).ConfigureAwait(false);
+        return true;
     }
 
     private static string? Unknown(JsonElement body, params string[] allowed)

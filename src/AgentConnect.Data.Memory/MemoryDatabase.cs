@@ -110,6 +110,12 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
+            member.StampKey();
+            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailKey == member.EmailKey))
+            {
+                throw new DuplicateValueException();
+            }
+
             Create(_members, Key(member.TenantId, member.Id), member);
         }
 
@@ -121,6 +127,12 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
+            member.StampKey();
+            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailKey == member.EmailKey))
+            {
+                throw new DuplicateValueException();
+            }
+
             Replace(_members, Key(member.TenantId, member.Id), member);
         }
 
@@ -178,6 +190,8 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
+            workspace.StampKey();
+            EnsureWorkspaceName(workspace);
             Create(_workspaces, Key(workspace.TenantId, workspace.Id), workspace);
         }
 
@@ -189,6 +203,8 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
+            workspace.StampKey();
+            EnsureWorkspaceName(workspace);
             Replace(_workspaces, Key(workspace.TenantId, workspace.Id), workspace);
         }
 
@@ -250,6 +266,8 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
+            list.StampKey();
+            EnsureListName(list);
             Create(_lists, Key(list.TenantId, list.WorkspaceId, list.Id), list);
         }
 
@@ -261,6 +279,8 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
+            list.StampKey();
+            EnsureListName(list);
             Replace(_lists, Key(list.TenantId, list.WorkspaceId, list.Id), list);
         }
 
@@ -604,6 +624,32 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         catch (JsonException)
         {
             return false;
+        }
+    }
+
+    private void EnsureWorkspaceName(WorkspaceDocument workspace)
+    {
+        if (workspace.DeletedAt is not null)
+        {
+            return;
+        }
+
+        if (_workspaces.Values.Any(stored => stored.TenantId == workspace.TenantId && stored.Id != workspace.Id && stored.DeletedAt is null && stored.NameKey == workspace.NameKey))
+        {
+            throw new DuplicateValueException();
+        }
+    }
+
+    private void EnsureListName(ListDocument list)
+    {
+        if (list.DeletedAt is not null)
+        {
+            return;
+        }
+
+        if (_lists.Values.Any(stored => stored.TenantId == list.TenantId && stored.WorkspaceId == list.WorkspaceId && stored.Id != list.Id && stored.DeletedAt is null && stored.NameKey == list.NameKey))
+        {
+            throw new DuplicateValueException();
         }
     }
 

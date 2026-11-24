@@ -65,14 +65,33 @@ public sealed class CosmosEmulatorTests
         Assert.Equal(["i1", "i2"], await Ids(caller, workspace, list, where: """[{"path":"title","op":"startsWith","value":"Fix"}]"""));
         Assert.Equal(["i3"], await Ids(caller, workspace, list, where: """[{"path":"title","op":"contains","value":"docs"}]"""));
         Assert.Equal(["i1", "i4"], await Ids(caller, workspace, list, where: """[{"path":"priority","op":"ge","value":3}]"""));
+        Assert.Equal(["i1", "i3"], await Ids(caller, workspace, list, where: """[{"path":"due","op":"lt","value":"2026-12-01T00:00:00Z"}]"""));
+        Assert.Equal(["i3"], await Ids(caller, workspace, list, where: """[{"path":"done","op":"eq","value":true}]"""));
+        Assert.Equal(["i1", "i2"], await Ids(caller, workspace, list, where: """[{"path":"tags","op":"contains","value":"auth"}]"""));
         Assert.Empty(await Ids(caller, workspace, list, where: """[{"path":"status","op":"eq","value":"Open"}]"""));
+        Assert.Equal(["i2", "i3"], await Ids(caller, workspace, list, where: """[{"path":"status","op":"ne","value":"open"}]"""));
+        Assert.Equal(["i2"], await Ids(caller, workspace, list, where: """[{"path":"owner","op":"ne","value":"ann"}]"""));
         Assert.Equal(["i4", "i1", "i3", "i2"], await Ids(caller, workspace, list, order: """{"path":"priority","desc":true}"""));
         Assert.Equal(["i3", "i1", "i2", "i4"], await Ids(caller, workspace, list));
 
-        var first = Ok(await _platform.Content.QueryItemsAsync(caller, workspace, list, "ids", default, default, Node("""{"path":"priority","desc":true}"""), [], 1, true, null, CancellationToken.None));
-        Assert.Equal("i4", first.Items[0].Id);
-        var second = Ok(await _platform.Content.QueryItemsAsync(caller, workspace, list, "ids", default, default, Node("""{"path":"priority","desc":true}"""), [], null, false, first.Continuation, CancellationToken.None));
-        Assert.Equal("i1", second.Items[0].Id);
+        var seen = new List<string>();
+        string? token = null;
+        for (var guard = 0; guard < 4; guard++)
+        {
+            var page = Ok(await _platform.Content.QueryItemsAsync(caller, workspace, list, "ids", default, default, Node("""{"path":"done"}"""), [], 1, true, token, CancellationToken.None));
+            Assert.Single(page.Items);
+            seen.Add(page.Items[0].Id);
+            token = page.Continuation;
+            if (token is null)
+            {
+                break;
+            }
+        }
+
+        Assert.Equal(4, seen.Count);
+        Assert.Equal("i3", seen[3]);
+        Assert.Equal(["i1", "i2", "i4"], seen.Take(3).Order(StringComparer.Ordinal).ToArray());
+        Assert.Null(token);
     }
 
     /// <summary>schemaVersion filters select the stored version. T-23.</summary>
@@ -340,6 +359,12 @@ public sealed class CosmosPlatform : IAsyncLifetime
         if (string.IsNullOrWhiteSpace(endpoint) || string.IsNullOrWhiteSpace(key))
         {
             return;
+        }
+
+        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
+            && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")))
+        {
+            Environment.SetEnvironmentVariable("DOTNET_ENVIRONMENT", "Development");
         }
 
         var options = new AgentConnectOptions

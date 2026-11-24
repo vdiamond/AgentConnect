@@ -22,6 +22,11 @@ public static class CosmosErrors
     public static Exception MapWrite(CosmosException exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
+        if (exception.StatusCode == HttpStatusCode.Conflict)
+        {
+            return new DuplicateValueException();
+        }
+
         if (exception.StatusCode == HttpStatusCode.TooManyRequests)
         {
             return new StorageThrottleException(exception.RetryAfter ?? TimeSpan.FromSeconds(1));

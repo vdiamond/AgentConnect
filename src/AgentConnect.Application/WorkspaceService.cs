@@ -90,7 +90,11 @@ public sealed class WorkspaceService
             Created = now,
             Updated = now,
         };
-        await _workspaces.CreateAsync(workspace, cancellationToken).ConfigureAwait(false);
+        var duplicate = await Unique.CreateAsync(ct => _workspaces.CreateAsync(workspace, ct), "name: already exists", cancellationToken).ConfigureAwait(false);
+        if (duplicate is not null)
+        {
+            return OperationResult<WorkspaceCreatedResult>.Fail(duplicate);
+        }
         Record(caller.Member.Id, AuditActions.WorkspaceCreated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id));
         var results = new List<RoleAssignmentResult>();
         foreach (var (email, role) in assignments)
@@ -217,20 +221,44 @@ public sealed class WorkspaceService
 
         if (nextName != workspace.Name || nextDescription != workspace.Description)
         {
-            workspace = await DocumentUpdates.UpdateAsync(
-                ct => _workspaces.GetAsync(caller.Tenant.Id, workspaceId, ct),
-                (current, ct) => _workspaces.ReplaceAsync(current, ct),
-                current =>
-                {
-                    current.Name = nextName;
-                    current.Description = nextDescription;
-                    current.Updated = _clock.UtcNow;
-                },
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                workspace = await DocumentUpdates.UpdateAsync(
+                    ct => _workspaces.GetAsync(caller.Tenant.Id, workspaceId, ct),
+                    (current, ct) => _workspaces.ReplaceAsync(current, ct),
+                    current =>
+                    {
+                        current.Name = nextName;
+                        current.Description = nextDescription;
+                        current.Updated = _clock.UtcNow;
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (DuplicateValueException)
+            {
+                return OperationResult<WorkspaceUpdatedResult>.Fail(PlatformError.Conflict("name: already exists"));
+            }
+
             Record(caller.Member.Id, AuditActions.WorkspaceUpdated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id));
         }
 
         return OperationResult<WorkspaceUpdatedResult>.Ok(new WorkspaceUpdatedResult(workspace.Id, workspace.Name, workspace.Description));
+    }
+
+    /// <summary>Checks that the caller may update a workspace before the body is read. FR-42.</summary>
+    /// <param name="caller">The caller.</param>
+    /// <param name="workspaceId">The workspace id.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The 404 or 403, or null when the body may be read.</returns>
+    public async Task<PlatformError?> AccessAsync(Caller caller, string workspaceId, CancellationToken cancellationToken)
+    {
+        var workspace = await _workspaces.GetAsync(caller.Tenant.Id, workspaceId, cancellationToken).ConfigureAwait(false);
+        if (workspace is null || workspace.DeletedAt is not null || !caller.CanSee(workspaceId))
+        {
+            return PlatformError.NotFound;
+        }
+
+        return Permissions.AuthorizeWorkspace(caller, workspaceId, PlatformAction.UpdateWorkspace, null, null, null);
     }
 
     #region private

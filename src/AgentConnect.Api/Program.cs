@@ -13,7 +13,7 @@ public partial class Program
     public static async Task Main(string[] args)
     {
         var builder = WebApplication.CreateBuilder(args);
-        builder.Services.AddAgentConnect(builder.Configuration);
+        builder.Services.AddAgentConnect(builder.Configuration, builder.Environment);
         var app = builder.Build();
         app.UseMiddleware<CallerMiddleware>();
         ApiEndpoints.Map(app);

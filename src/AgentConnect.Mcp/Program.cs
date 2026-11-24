@@ -21,7 +21,7 @@ public partial class Program
             options.SerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
         });
         builder.Services.AddHttpContextAccessor();
-        builder.Services.AddAgentConnect(builder.Configuration);
+        builder.Services.AddAgentConnect(builder.Configuration, builder.Environment);
         builder.Services.AddMcpServer()
             .WithHttpTransport(options =>
             {

@@ -95,7 +95,11 @@ public sealed class ContentService
             Created = now,
             Updated = now,
         };
-        await _lists.CreateAsync(list, cancellationToken).ConfigureAwait(false);
+        var duplicate = await Unique.CreateAsync(ct => _lists.CreateAsync(list, ct), "name: already exists", cancellationToken).ConfigureAwait(false);
+        if (duplicate is not null)
+        {
+            return OperationResult<ListView>.Fail(duplicate);
+        }
         Record(caller.Member.Id, AuditActions.ListCreated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("listId", list.Id));
         return OperationResult<ListView>.Ok(ToView(list));
     }
@@ -137,16 +141,23 @@ public sealed class ContentService
 
         if (nextName != list.Name || nextDescription != list.Description)
         {
-            list = await DocumentUpdates.UpdateAsync(
-                ct => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, ct),
-                (current, ct) => _lists.ReplaceAsync(current, ct),
-                current =>
-                {
-                    current.Name = nextName;
-                    current.Description = nextDescription;
-                    current.Updated = _clock.UtcNow;
-                },
-                cancellationToken).ConfigureAwait(false);
+            try
+            {
+                list = await DocumentUpdates.UpdateAsync(
+                    ct => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, ct),
+                    (current, ct) => _lists.ReplaceAsync(current, ct),
+                    current =>
+                    {
+                        current.Name = nextName;
+                        current.Description = nextDescription;
+                        current.Updated = _clock.UtcNow;
+                    },
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (DuplicateValueException)
+            {
+                return OperationResult<ListView>.Fail(PlatformError.Conflict("name: already exists"));
+            }
             Record(caller.Member.Id, AuditActions.ListUpdated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("listId", list.Id));
         }
 
@@ -515,6 +526,19 @@ public sealed class ContentService
         }
 
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
+    }
+
+    /// <summary>Checks list or item access before the body is read. FR-42.</summary>
+    /// <param name="caller">The caller.</param>
+    /// <param name="workspaceId">The workspace id.</param>
+    /// <param name="listId">The list id, or null when the action is on the workspace.</param>
+    /// <param name="action">The action.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The 404 or 403, or null when the body may be read.</returns>
+    public async Task<PlatformError?> AccessAsync(Caller caller, string workspaceId, string? listId, PlatformAction action, CancellationToken cancellationToken)
+    {
+        var gate = await GateAsync(caller, workspaceId, listId, action, false, cancellationToken).ConfigureAwait(false);
+        return gate.Error;
     }
 
     #region private

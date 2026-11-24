@@ -16,7 +16,7 @@ public static class Program
     public static async Task Main(string[] args)
     {
         var builder = Host.CreateApplicationBuilder(args);
-        builder.Services.AddAgentConnect(builder.Configuration);
+        builder.Services.AddAgentConnect(builder.Configuration, builder.Environment);
         using var host = builder.Build();
         await host.StartAsync().ConfigureAwait(false);
         try

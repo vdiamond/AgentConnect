@@ -79,7 +79,11 @@ public sealed class TenantService
         var member = NewMember(tenant.Id, ownerEmail, isTenantOwner: true, now);
         tenant.FirstMemberId = member.Id;
         await _tenants.CreateAsync(tenant, cancellationToken).ConfigureAwait(false);
-        await _members.CreateAsync(member, cancellationToken).ConfigureAwait(false);
+        var duplicate = await Unique.CreateAsync(ct => _members.CreateAsync(member, ct), "email: already exists", cancellationToken).ConfigureAwait(false);
+        if (duplicate is not null)
+        {
+            return OperationResult<TenantCreatedResult>.Fail(duplicate);
+        }
         Audit(PlatformSupport.PlatformOperator, AuditActions.TenantCreated, ("tenantId", tenant.Id));
         Audit(PlatformSupport.PlatformOperator, AuditActions.MemberAdded, ("tenantId", tenant.Id), ("memberId", member.Id));
         var sent = await SendInvitationAsync(member, tenant, "AgentConnect", null, null, cancellationToken).ConfigureAwait(false);

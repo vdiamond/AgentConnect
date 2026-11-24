@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace AgentConnect;
@@ -18,11 +19,13 @@ public static class AgentConnectBuilder
     /// </summary>
     /// <param name="services">The services.</param>
     /// <param name="configuration">The configuration.</param>
+    /// <param name="environment">The host environment. An unset name counts as Production.</param>
     /// <returns>The same collection.</returns>
-    public static IServiceCollection AddAgentConnect(this IServiceCollection services, IConfiguration configuration)
+    public static IServiceCollection AddAgentConnect(this IServiceCollection services, IConfiguration configuration, IHostEnvironment environment)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(configuration);
+        ArgumentNullException.ThrowIfNull(environment);
         services.AddOptions<AgentConnectOptions>().Bind(configuration.GetSection(AgentConnectOptions.SectionName));
         services.TryAddSingleton<IClock, SystemClock>();
         services.AddSingleton(sp =>
@@ -41,9 +44,9 @@ public static class AgentConnectBuilder
         services.AddSingleton<DeletionService>();
 
         var provider = configuration[$"{AgentConnectOptions.SectionName}:DataProvider"] ?? "Cosmos";
-        var environmentName = configuration["DOTNET_ENVIRONMENT"] ?? configuration["ASPNETCORE_ENVIRONMENT"];
+        var environmentName = environment.EnvironmentName;
         if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(environmentName, "Production", StringComparison.OrdinalIgnoreCase))
+            && (string.IsNullOrEmpty(environmentName) || string.Equals(environmentName, "Production", StringComparison.OrdinalIgnoreCase)))
         {
             throw new InvalidOperationException("AgentConnect:DataProvider Memory cannot be used in Production.");
         }

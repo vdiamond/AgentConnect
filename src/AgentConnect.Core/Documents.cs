@@ -67,6 +67,9 @@ public sealed class MemberDocument : IConcurrencyDocument
     /// <summary>Gets or sets the trimmed email. Uniqueness is case-insensitive.</summary>
     public string Email { get; set; } = "";
 
+    /// <summary>Gets or sets the lowercase email used as the unique key inside a tenant.</summary>
+    public string EmailKey { get; set; } = "";
+
     /// <summary>Gets or sets the secure hash of the token secret.</summary>
     public string TokenHash { get; set; } = "";
 
@@ -91,6 +94,12 @@ public sealed class MemberDocument : IConcurrencyDocument
     /// <summary>Gets or sets when an email last contained the token, in UTC.</summary>
     public DateTimeOffset? LastTokenSent { get; set; }
 
+    /// <summary>Sets <see cref="EmailKey"/> from <see cref="Email"/>.</summary>
+    public void StampKey()
+    {
+        EmailKey = Email.ToLowerInvariant();
+    }
+
     /// <inheritdoc />
     [JsonPropertyName("_etag")]
     public string? ETag { get; set; }
@@ -111,6 +120,9 @@ public sealed class WorkspaceDocument : IConcurrencyDocument
     /// <summary>Gets or sets the trimmed name.</summary>
     public string Name { get; set; } = "";
 
+    /// <summary>Gets or sets the lowercase name used as the unique key. A deleted workspace keeps a private key so the name can be reused.</summary>
+    public string NameKey { get; set; } = "";
+
     /// <summary>Gets or sets the trimmed description, or null when none is set.</summary>
     public string? Description { get; set; }
 
@@ -122,6 +134,12 @@ public sealed class WorkspaceDocument : IConcurrencyDocument
 
     /// <summary>Gets or sets when the workspace was marked deleted. Null unless deleted.</summary>
     public DateTimeOffset? DeletedAt { get; set; }
+
+    /// <summary>Sets <see cref="NameKey"/> from the live name, or to a private key once the workspace is deleted.</summary>
+    public void StampKey()
+    {
+        NameKey = DeletedAt is null ? Name.ToLowerInvariant() : "\u0000" + Id;
+    }
 
     /// <inheritdoc />
     [JsonPropertyName("_etag")]
@@ -146,6 +164,9 @@ public sealed class ListDocument : IConcurrencyDocument
     /// <summary>Gets or sets the trimmed name.</summary>
     public string Name { get; set; } = "";
 
+    /// <summary>Gets or sets the lowercase name used as the unique key. A deleted list keeps a private key so the name can be reused.</summary>
+    public string NameKey { get; set; } = "";
+
     /// <summary>Gets or sets the trimmed description, or null when none is set.</summary>
     public string? Description { get; set; }
 
@@ -163,6 +184,12 @@ public sealed class ListDocument : IConcurrencyDocument
 
     /// <summary>Gets or sets when the list was marked deleted. Null unless deleted.</summary>
     public DateTimeOffset? DeletedAt { get; set; }
+
+    /// <summary>Sets <see cref="NameKey"/> from the live name, or to a private key once the list is deleted.</summary>
+    public void StampKey()
+    {
+        NameKey = DeletedAt is null ? Name.ToLowerInvariant() : "\u0000" + Id;
+    }
 
     /// <inheritdoc />
     [JsonPropertyName("_etag")]

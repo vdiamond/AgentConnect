@@ -46,8 +46,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        var result = await _workspaces.ListAsync(caller, pageSize, pageSize is not null, continuation, cancellationToken).ConfigureAwait(false);
-        return ToResult(result);
+        return ToResult(await Guarded(() => _workspaces.ListAsync(caller, pageSize, pageSize is not null, continuation, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Updates a workspace name and description.</summary>
@@ -65,8 +64,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        var result = await _workspaces.UpdateAsync(caller, workspaceId, new OptionalText(name is not null, name), new OptionalText(description is not null, description), cancellationToken).ConfigureAwait(false);
-        return ToResult(result);
+        return ToResult(await Guarded(() => _workspaces.UpdateAsync(caller, workspaceId, new OptionalText(name is not null, name), new OptionalText(description is not null, description), cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Lists the lists in a workspace.</summary>
@@ -84,8 +82,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        var result = await _content.ListListsAsync(caller, workspaceId, pageSize, pageSize is not null, continuation, cancellationToken).ConfigureAwait(false);
-        return ToResult(result);
+        return ToResult(await Guarded(() => _content.ListListsAsync(caller, workspaceId, pageSize, pageSize is not null, continuation, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Creates a list.</summary>
@@ -104,8 +101,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        var result = await _content.CreateListAsync(caller, workspaceId, name, description, description is not null, schema.ToJsonString(), cancellationToken).ConfigureAwait(false);
-        return ToResult(result);
+        return ToResult(await Guarded(() => _content.CreateListAsync(caller, workspaceId, name, description, description is not null, schema.ToJsonString(), cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Updates a list name or description.</summary>
@@ -124,8 +120,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        var result = await _content.UpdateListAsync(caller, workspaceId, listId, new OptionalText(name is not null, name), new OptionalText(description is not null, description), cancellationToken).ConfigureAwait(false);
-        return ToResult(result);
+        return ToResult(await Guarded(() => _content.UpdateListAsync(caller, workspaceId, listId, new OptionalText(name is not null, name), new OptionalText(description is not null, description), cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Deletes a list.</summary>
@@ -142,7 +137,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _content.DeleteListAsync(caller, workspaceId, listId, cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.DeleteListAsync(caller, workspaceId, listId, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Reads a list schema.</summary>
@@ -159,7 +154,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _content.GetSchemaAsync(caller, workspaceId, listId, cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.GetSchemaAsync(caller, workspaceId, listId, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Replaces a list schema.</summary>
@@ -177,18 +172,19 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _content.UpdateSchemaAsync(caller, workspaceId, listId, schema.ToJsonString(), cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.UpdateSchemaAsync(caller, workspaceId, listId, schema.ToJsonString(), cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Queries items.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="listId">The list id.</param>
     /// <param name="shape">full or ids.</param>
-    /// <param name="schemaVersion">The version filter.</param>
-    /// <param name="where">The conditions.</param>
-    /// <param name="orderBy">The sort.</param>
+    /// <param name="schemaVersion">The version filter, as raw JSON.</param>
+    /// <param name="where">The conditions, as raw JSON.</param>
+    /// <param name="orderBy">The sort, as raw JSON.</param>
     /// <param name="pageSize">The page size.</param>
     /// <param name="continuation">The continuation token.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
     [McpServerTool(Name = "query_items"), Description("Queries the items of one list.")]
@@ -196,11 +192,12 @@ public sealed class AgentConnectTools
         string workspaceId,
         string listId,
         string? shape = null,
-        JsonObject? schemaVersion = null,
-        JsonArray? where = null,
-        JsonObject? orderBy = null,
+        JsonElement? schemaVersion = null,
+        JsonElement? where = null,
+        JsonElement? orderBy = null,
         int? pageSize = null,
         string? continuation = null,
+        RequestContext<CallToolRequestParams>? request = null,
         CancellationToken cancellationToken = default)
     {
         var caller = Caller();
@@ -209,7 +206,8 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        var result = await _content.QueryItemsAsync(caller, workspaceId, listId, shape, Element(schemaVersion), Element(where), Element(orderBy), [], pageSize, pageSize is not null, continuation, cancellationToken).ConfigureAwait(false);
+        var unknown = UnknownArguments(request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation");
+        var result = await Guarded(() => _content.QueryItemsAsync(caller, workspaceId, listId, shape, Copy(schemaVersion), Copy(where), Copy(orderBy), unknown, pageSize, pageSize is not null, continuation, cancellationToken)).ConfigureAwait(false);
         return ToResult(result);
     }
 
@@ -228,18 +226,25 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _content.GetItemAsync(caller, workspaceId, listId, itemId, cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.GetItemAsync(caller, workspaceId, listId, itemId, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Creates or replaces an item.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="listId">The list id.</param>
-    /// <param name="data">The item JSON.</param>
+    /// <param name="data">The item JSON, as raw JSON.</param>
     /// <param name="itemId">The item id. Omitted ids are generated.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The id and schema version.</returns>
     [McpServerTool(Name = "upsert_item"), Description("Creates or replaces an item. The JSON is validated against the current schema.")]
-    public async Task<CallToolResult> UpsertItem(string workspaceId, string listId, JsonObject data, string? itemId = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> UpsertItem(
+        string workspaceId,
+        string listId,
+        JsonElement? data = null,
+        string? itemId = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -247,7 +252,14 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _content.UpsertItemAsync(caller, workspaceId, listId, itemId, data.ToJsonString(), cancellationToken).ConfigureAwait(false));
+        var unknown = UnknownArguments(request, "workspaceId", "listId", "data", "itemId");
+        if (unknown.Count > 0)
+        {
+            return Error(PlatformError.BadRequest(unknown[0] + ": unknown field"));
+        }
+
+        var json = data is { } value && value.ValueKind != JsonValueKind.Undefined ? value.GetRawText() : null;
+        return ToResult(await Guarded(() => _content.UpsertItemAsync(caller, workspaceId, listId, itemId, json, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Deletes an item.</summary>
@@ -265,7 +277,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _content.DeleteItemAsync(caller, workspaceId, listId, itemId, cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.DeleteItemAsync(caller, workspaceId, listId, itemId, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Adds an email to a workspace.</summary>
@@ -283,7 +295,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _members.AddToWorkspaceAsync(caller, workspaceId, email, role, cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.AddToWorkspaceAsync(caller, workspaceId, email, role, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Changes a workspace role.</summary>
@@ -301,7 +313,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _members.ChangeRoleAsync(caller, workspaceId, email, role, cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.ChangeRoleAsync(caller, workspaceId, email, role, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Removes a workspace role.</summary>
@@ -318,7 +330,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _members.RemoveFromWorkspaceAsync(caller, workspaceId, email, cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.RemoveFromWorkspaceAsync(caller, workspaceId, email, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Lists workspace members.</summary>
@@ -336,7 +348,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await _members.ListWorkspaceMembersAsync(caller, workspaceId, pageSize, pageSize is not null, continuation, cancellationToken).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.ListWorkspaceMembersAsync(caller, workspaceId, pageSize, pageSize is not null, continuation, cancellationToken)).ConfigureAwait(false));
     }
 
     #region private
@@ -352,14 +364,52 @@ public sealed class AgentConnectTools
     private readonly MemberService _members;
     private readonly ContentService _content;
 
-    private static JsonElement Element(JsonNode? node)
+    private static JsonElement Copy(JsonElement? element)
     {
-        if (node is null)
+        return element is { } value && value.ValueKind != JsonValueKind.Undefined ? value.Clone() : default;
+    }
+
+    private static List<string> UnknownArguments(RequestContext<CallToolRequestParams>? request, params string[] known)
+    {
+        var unknown = new List<string>();
+        if (request?.Params?.Arguments is not { } arguments)
         {
-            return default;
+            return unknown;
         }
 
-        return JsonSerializer.SerializeToElement(node);
+        foreach (var name in arguments.Keys)
+        {
+            if (Array.IndexOf(known, name) < 0)
+            {
+                unknown.Add(name);
+            }
+        }
+
+        return unknown;
+    }
+
+    private static async Task<OperationResult<T>> Guarded<T>(Func<Task<OperationResult<T>>> call)
+    {
+        try
+        {
+            return await call().ConfigureAwait(false);
+        }
+        catch (StorageThrottleException exception)
+        {
+            return OperationResult<T>.Fail(PlatformError.TooManyRequests(exception.RetryAfter));
+        }
+        catch (StorageTooLargeException)
+        {
+            return OperationResult<T>.Fail(PlatformError.ItemTooLarge);
+        }
+        catch (StorageLimitException)
+        {
+            return OperationResult<T>.Fail(PlatformError.ListStorageLimit);
+        }
+        catch (StorageConflictException)
+        {
+            return OperationResult<T>.Fail(PlatformError.Conflict("$: conflict"));
+        }
     }
 
     private Caller? Caller()

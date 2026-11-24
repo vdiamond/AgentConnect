@@ -101,7 +101,6 @@ public sealed class MoreSpecTests
         Assert.Equal(403, (await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + workspace + "/lists/" + listId, new { name = "Renamed" }, writeToken)).Status);
         Assert.Equal(200, (await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + workspace + "/lists/" + listId, new { name = "Renamed" }, owner.Token)).Status);
         Assert.Equal(200, (await _session.SendAsync(HttpMethod.Get, "/members", null, owner.Token)).Status);
-        Assert.Equal(200, (await _session.SendAsync(HttpMethod.Get, "/members", null, owner.Token)).Status);
         Assert.Equal(403, (await _session.SendAsync(HttpMethod.Get, "/members", null, writeToken)).Status);
         Assert.Equal(200, (await _session.SendAsync(HttpMethod.Get, "/workspaces/" + workspace + "/members", null, owner.Token)).Status);
         Assert.Equal(403, (await _session.SendAsync(HttpMethod.Get, "/workspaces/" + workspace + "/members", null, writeToken)).Status);
@@ -381,6 +380,50 @@ public sealed class MoreSpecTests
         var demotion = await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = workspaceOwner, role = "WorkspaceRead" }, ownerToken);
         Assert.Equal(403, demotion.Status);
         Assert.Equal("$: not allowed on yourself", Error(demotion.Body));
+    }
+
+    [Fact]
+    [Trait("T", "T-52")]
+    public async Task QueryItems_RejectsAnObjectWhereAndUnknownArguments()
+    {
+        var owner = await _session.CreateTenantAsync("QueryShape");
+        var workspace = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces", new { name = "Ops", members = new[] { new { email = owner.Email, role = "WorkspaceOwner" } } }, owner.Token)).Body).GetProperty("id").GetString()!;
+        var list = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", new { name = "Tasks", schema = JsonDocument.Parse(TaskSchema).RootElement }, owner.Token)).Body).GetProperty("id").GetString()!;
+        var where = await _session.ToolAsync(owner.Token, "query_items", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["shape"] = "ids",
+            ["where"] = Session.Node("""{"path":"status"}"""),
+        });
+        Assert.True(where.IsError);
+        Assert.Equal("where: expected array, found Object", where.Text);
+        var nested = await _session.ToolAsync(owner.Token, "query_items", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["shape"] = "ids",
+            ["where"] = Session.Node("""[{"path":"title","op":"eq","value":"a","foo":1}]"""),
+        });
+        Assert.True(nested.IsError);
+        Assert.Equal("where[0].foo: unknown field", nested.Text);
+        var extra = await _session.ToolAsync(owner.Token, "query_items", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["shape"] = "ids",
+            ["extra"] = 1,
+        });
+        Assert.True(extra.IsError);
+        Assert.Equal("extra: unknown field", extra.Text);
+        var data = await _session.ToolAsync(owner.Token, "upsert_item", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["data"] = Session.Node("[]"),
+        });
+        Assert.True(data.IsError);
+        Assert.Contains("expected Object", data.Text, StringComparison.Ordinal);
     }
 
     #region private

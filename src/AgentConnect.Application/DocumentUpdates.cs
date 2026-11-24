@@ -46,3 +46,30 @@ public static class DocumentUpdates
         throw new StorageConflictException();
     }
 }
+
+/// <summary>
+/// Inserts a document and turns a unique-key conflict into the caller's 409 text.
+/// </summary>
+public static class Unique
+{
+    /// <summary>
+    /// Creates a document. A concurrent insert of the same email or name returns <paramref name="conflictText"/>.
+    /// </summary>
+    /// <param name="create">The insert.</param>
+    /// <param name="conflictText">The 409 text.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The conflict, or null when the insert succeeded.</returns>
+    public static async Task<PlatformError?> CreateAsync(Func<CancellationToken, Task> create, string conflictText, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(create);
+        try
+        {
+            await create(cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+        catch (DuplicateValueException)
+        {
+            return PlatformError.Conflict(conflictText);
+        }
+    }
+}

@@ -91,8 +91,8 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
             Serializer = new CosmosJsonSerializer(),
             ConnectionMode = ConnectionMode.Gateway,
         };
-        var emulatorKey = Environment.GetEnvironmentVariable("AGENTCONNECT_COSMOS_KEY");
-        if (!string.IsNullOrEmpty(emulatorKey))
+        var emulatorKey = EmulatorKey(options.Cosmos.Endpoint);
+        if (emulatorKey is not null)
         {
             clientOptions.LimitToEndpoint = true;
             clientOptions.HttpClientFactory = () =>
@@ -103,11 +103,12 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
                 };
                 return new HttpClient(handler);
             };
+            _client = new CosmosClient(options.Cosmos.Endpoint, emulatorKey, clientOptions);
         }
-
-        _client = string.IsNullOrEmpty(emulatorKey)
-            ? new CosmosClient(options.Cosmos.Endpoint, new ManagedIdentityCredential(ManagedIdentityId.SystemAssigned), clientOptions)
-            : new CosmosClient(options.Cosmos.Endpoint, emulatorKey, clientOptions);
+        else
+        {
+            _client = new CosmosClient(options.Cosmos.Endpoint, new ManagedIdentityCredential(ManagedIdentityId.SystemAssigned), clientOptions);
+        }
     }
 
     /// <inheritdoc />
@@ -151,12 +152,14 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
     /// <inheritdoc />
     public Task CreateAsync(MemberDocument member, CancellationToken cancellationToken)
     {
+        member.StampKey();
         return WriteAsync(() => Members.CreateItemAsync(member, new PartitionKey(member.TenantId), cancellationToken: cancellationToken));
     }
 
     /// <inheritdoc />
     public Task ReplaceAsync(MemberDocument member, CancellationToken cancellationToken)
     {
+        member.StampKey();
         return ReplaceDocumentAsync(Members, member, member.Id, new PartitionKey(member.TenantId), cancellationToken);
     }
 
@@ -189,12 +192,14 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
     /// <inheritdoc />
     public Task CreateAsync(WorkspaceDocument workspace, CancellationToken cancellationToken)
     {
+        workspace.StampKey();
         return WriteAsync(() => Workspaces.CreateItemAsync(workspace, new PartitionKey(workspace.TenantId), cancellationToken: cancellationToken));
     }
 
     /// <inheritdoc />
     public Task ReplaceAsync(WorkspaceDocument workspace, CancellationToken cancellationToken)
     {
+        workspace.StampKey();
         return ReplaceDocumentAsync(Workspaces, workspace, workspace.Id, new PartitionKey(workspace.TenantId), cancellationToken);
     }
 
@@ -237,12 +242,14 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
     /// <inheritdoc />
     public Task CreateAsync(ListDocument list, CancellationToken cancellationToken)
     {
+        list.StampKey();
         return WriteAsync(() => Lists.CreateItemAsync(list, ListKey(list.TenantId, list.WorkspaceId), cancellationToken: cancellationToken));
     }
 
     /// <inheritdoc />
     public Task ReplaceAsync(ListDocument list, CancellationToken cancellationToken)
     {
+        list.StampKey();
         return ReplaceDocumentAsync(Lists, list, list.Id, ListKey(list.TenantId, list.WorkspaceId), cancellationToken);
     }
 
@@ -334,18 +341,18 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
     /// <returns>A task.</returns>
     public async Task EnsureEmulatorContainersAsync(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AGENTCONNECT_COSMOS_KEY")))
+        if (EmulatorKey(_options.Endpoint) is null)
         {
             return;
         }
 
         var database = await _client.CreateDatabaseIfNotExistsAsync(_options.Database, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await CreateContainerAsync(database.Database, _options.TenantContainer, ["/id"], ["/id"], cancellationToken).ConfigureAwait(false);
-        await CreateContainerAsync(database.Database, _options.MemberContainer, ["/tenantId"], ["/created", "/id"], cancellationToken).ConfigureAwait(false);
+        await CreateContainerAsync(database.Database, _options.TenantContainer, ["/id"], [], null, cancellationToken).ConfigureAwait(false);
+        await CreateContainerAsync(database.Database, _options.MemberContainer, ["/tenantId"], ["/created", "/id"], "/emailKey", cancellationToken).ConfigureAwait(false);
         await AddCompositeAsync(database.Database, _options.MemberContainer, ["/email", "/id"], cancellationToken).ConfigureAwait(false);
-        await CreateContainerAsync(database.Database, _options.WorkspaceContainer, ["/tenantId"], ["/updated", "/id"], cancellationToken).ConfigureAwait(false);
-        await CreateContainerAsync(database.Database, _options.ListContainer, ["/tenantId", "/workspaceId"], ["/updated", "/id"], cancellationToken).ConfigureAwait(false);
-        await CreateContainerAsync(database.Database, _options.ItemContainer, ["/tenantId", "/workspaceId", "/listId"], ["/updated", "/id"], cancellationToken).ConfigureAwait(false);
+        await CreateContainerAsync(database.Database, _options.WorkspaceContainer, ["/tenantId"], ["/updated", "/id"], "/nameKey", cancellationToken).ConfigureAwait(false);
+        await CreateContainerAsync(database.Database, _options.ListContainer, ["/tenantId", "/workspaceId"], ["/updated", "/id"], "/nameKey", cancellationToken).ConfigureAwait(false);
+        await CreateContainerAsync(database.Database, _options.ItemContainer, ["/tenantId", "/workspaceId", "/listId"], ["/updated", "/id"], null, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -479,7 +486,29 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
         }
     }
 
-    private static async Task CreateContainerAsync(Database database, string name, string[] partitionKey, string[] composite, CancellationToken cancellationToken)
+    private static string? EmulatorKey(string endpoint)
+    {
+        var key = Environment.GetEnvironmentVariable("AGENTCONNECT_COSMOS_KEY");
+        if (string.IsNullOrEmpty(key) || !Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
+        {
+            return null;
+        }
+
+        if (uri.Host is not ("localhost" or "127.0.0.1" or "::1"))
+        {
+            return null;
+        }
+
+        var environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT");
+        if (string.IsNullOrEmpty(environment) || string.Equals(environment, "Production", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return key;
+    }
+
+    private static async Task CreateContainerAsync(Database database, string name, string[] partitionKey, string[] composite, string? uniquePath, CancellationToken cancellationToken)
     {
         var properties = new ContainerProperties
         {
@@ -494,17 +523,29 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
             properties.PartitionKeyPaths = partitionKey;
         }
 
-        var index = new Collection<CompositePath>();
-        foreach (var path in composite)
+        if (composite.Length >= 2)
         {
-            index.Add(new CompositePath
+            var index = new Collection<CompositePath>();
+            foreach (var path in composite)
             {
-                Path = path,
-                Order = CompositePathSortOrder.Ascending,
-            });
+                index.Add(new CompositePath
+                {
+                    Path = path,
+                    Order = CompositePathSortOrder.Ascending,
+                });
+            }
+
+            properties.IndexingPolicy.CompositeIndexes.Add(index);
         }
 
-        properties.IndexingPolicy.CompositeIndexes.Add(index);
+        if (uniquePath is not null)
+        {
+            var unique = new UniqueKey();
+            unique.Paths.Add(uniquePath);
+            properties.UniqueKeyPolicy = new UniqueKeyPolicy();
+            properties.UniqueKeyPolicy.UniqueKeys.Add(unique);
+        }
+
         properties.IndexingPolicy.IncludedPaths.Add(new IncludedPath { Path = "/*" });
         await database.CreateContainerIfNotExistsAsync(properties, cancellationToken: cancellationToken).ConfigureAwait(false);
     }
