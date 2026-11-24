@@ -37,6 +37,9 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     /// <summary>Gets or sets a fault thrown by the next item write.</summary>
     public ItemWriteFault WriteFault { get; set; }
 
+    /// <summary>Gets or sets a fault thrown by the next workspace read. Tests use it for the access gate.</summary>
+    public ItemWriteFault ReadFault { get; set; }
+
     /// <summary>Gets or sets the Retry-After value used for throttled and unavailable writes.</summary>
     public TimeSpan ThrottleRetryAfter { get; set; } = TimeSpan.FromSeconds(1);
 
@@ -61,12 +64,25 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     /// </summary>
     public Action? AfterListRead { get; set; }
 
+    /// <summary>Runs after a workspace is read and before the clone is returned.</summary>
+    public Action? AfterWorkspaceRead { get; set; }
+
+    /// <summary>Runs after a tenant is read and before the clone is returned.</summary>
+    public Action? AfterTenantRead { get; set; }
+
     /// <inheritdoc />
     public Task<TenantDocument?> GetAsync(string id, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
-            return Task.FromResult(_tenants.TryGetValue(id, out var tenant) ? Clone(tenant) : null);
+            if (!_tenants.TryGetValue(id, out var tenant))
+            {
+                return Task.FromResult<TenantDocument?>(null);
+            }
+
+            var clone = Clone(tenant);
+            AfterTenantRead?.Invoke();
+            return Task.FromResult<TenantDocument?>(clone);
         }
     }
 
@@ -205,7 +221,15 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            return Task.FromResult(_workspaces.TryGetValue(Key(tenantId, workspaceId), out var workspace) ? Clone(workspace) : null);
+            ThrowReadFault();
+            if (!_workspaces.TryGetValue(Key(tenantId, workspaceId), out var workspace))
+            {
+                return Task.FromResult<WorkspaceDocument?>(null);
+            }
+
+            var clone = Clone(workspace);
+            AfterWorkspaceRead?.Invoke();
+            return Task.FromResult<WorkspaceDocument?>(clone);
         }
     }
 
@@ -431,10 +455,22 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     private readonly Dictionary<string, ListDocument> _lists = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ItemDocument> _items = new(StringComparer.Ordinal);
 
+    private void ThrowReadFault()
+    {
+        var fault = ReadFault;
+        ReadFault = ItemWriteFault.None;
+        Throw(fault);
+    }
+
     private void ThrowFault()
     {
         var fault = WriteFault;
         WriteFault = ItemWriteFault.None;
+        Throw(fault);
+    }
+
+    private void Throw(ItemWriteFault fault)
+    {
         switch (fault)
         {
             case ItemWriteFault.Throttled:

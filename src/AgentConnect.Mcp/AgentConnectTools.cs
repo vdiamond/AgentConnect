@@ -96,12 +96,7 @@ public sealed class AgentConnectTools
             return Error(descriptionError);
         }
 
-        if (await AfterAccess(_workspaces.AccessAsync(caller, workspaceId, cancellationToken), request, "workspaceId", "name", "description").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _workspaces.UpdateAsync(caller, workspaceId, nextName, nextDescription, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _workspaces.UpdateAsync(caller, workspaceId, nextName, nextDescription, cancellationToken, UnknownAfterGate(request, "workspaceId", "name", "description"))).ConfigureAwait(false));
     }
 
     /// <summary>Lists the lists in a workspace.</summary>
@@ -125,13 +120,8 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, null, PlatformAction.ListLists, cancellationToken), request, "workspaceId", "pageSize", "continuation").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
         var (size, specified, token) = Page(request, pageSize, continuation);
-        return ToResult(await Guarded(() => _content.ListListsAsync(caller, workspaceId, size, specified, token, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.ListListsAsync(caller, workspaceId, size, specified, token, cancellationToken, UnknownAfterGate(request, "workspaceId", "pageSize", "continuation"))).ConfigureAwait(false));
     }
 
     /// <summary>Creates a list.</summary>
@@ -157,12 +147,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, null, PlatformAction.CreateList, cancellationToken), request, "workspaceId", "name", "schema", "description").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _content.CreateListAsync(caller, workspaceId, name, description, description is not null, JsonText(request, "schema", schema), cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.CreateListAsync(caller, workspaceId, name, description, description is not null, JsonText(request, "schema", schema), cancellationToken, UnknownAfterGate(request, "workspaceId", "name", "schema", "description"))).ConfigureAwait(false));
     }
 
     /// <summary>Updates a list name or description.</summary>
@@ -200,12 +185,7 @@ public sealed class AgentConnectTools
             return Error(descriptionError);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.UpdateList, cancellationToken), request, "workspaceId", "listId", "name", "description").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _content.UpdateListAsync(caller, workspaceId, listId, nextName, nextDescription, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.UpdateListAsync(caller, workspaceId, listId, nextName, nextDescription, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId", "name", "description"))).ConfigureAwait(false));
     }
 
     /// <summary>Deletes a list.</summary>
@@ -223,12 +203,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.DeleteList, cancellationToken), request, "workspaceId", "listId").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _content.DeleteListAsync(caller, workspaceId, listId, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.DeleteListAsync(caller, workspaceId, listId, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId"))).ConfigureAwait(false));
     }
 
     /// <summary>Reads a list schema.</summary>
@@ -246,12 +221,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.GetSchema, cancellationToken), request, "workspaceId", "listId").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _content.GetSchemaAsync(caller, workspaceId, listId, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.GetSchemaAsync(caller, workspaceId, listId, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId"))).ConfigureAwait(false));
     }
 
     /// <summary>Replaces a list schema.</summary>
@@ -275,12 +245,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.UpdateSchema, cancellationToken), request, "workspaceId", "listId", "schema").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _content.UpdateSchemaAsync(caller, workspaceId, listId, JsonText(request, "schema", schema), cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.UpdateSchemaAsync(caller, workspaceId, listId, JsonText(request, "schema", schema), cancellationToken, UnknownAfterGate(request, "workspaceId", "listId", "schema"))).ConfigureAwait(false));
     }
 
     /// <summary>Queries items.</summary>
@@ -314,11 +279,6 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.QueryItems, cancellationToken), request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
         var (size, specified, token) = Page(request, pageSize, continuation);
         var result = await Guarded(() => _content.QueryItemsAsync(
             caller,
@@ -332,7 +292,8 @@ public sealed class AgentConnectTools
             size,
             specified,
             token,
-            cancellationToken)).ConfigureAwait(false);
+            cancellationToken,
+            UnknownAfterGate(request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation"))).ConfigureAwait(false);
         return ToResult(result);
     }
 
@@ -352,12 +313,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.GetItem, cancellationToken), request, "workspaceId", "listId", "itemId").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _content.GetItemAsync(caller, workspaceId, listId, itemId, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.GetItemAsync(caller, workspaceId, listId, itemId, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId", "itemId"))).ConfigureAwait(false));
     }
 
     /// <summary>Creates or replaces an item.</summary>
@@ -383,19 +339,21 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.UpsertItem, cancellationToken), request, "workspaceId", "listId", "data", "itemId").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
         var dataElement = Read(request, "data", data);
-        if (dataElement.ValueKind == JsonValueKind.Null)
+        var json = dataElement.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null : dataElement.GetRawText();
+        var afterGate = UnknownAfterGate(request, "workspaceId", "listId", "data", "itemId");
+        return ToResult(await Guarded(() => _content.UpsertItemAsync(caller, workspaceId, listId, itemId, json, cancellationToken, () =>
         {
-            return Error(PlatformError.BadRequest("data: required"));
-        }
+            var unknown = afterGate();
+            if (unknown is not null)
+            {
+                return unknown;
+            }
 
-        var json = dataElement.ValueKind == JsonValueKind.Undefined ? null : dataElement.GetRawText();
-        return ToResult(await Guarded(() => _content.UpsertItemAsync(caller, workspaceId, listId, itemId, json, cancellationToken)).ConfigureAwait(false));
+            return dataElement.ValueKind == JsonValueKind.Null
+                ? PlatformError.BadRequest("data: required")
+                : null;
+        })).ConfigureAwait(false));
     }
 
     /// <summary>Deletes an item.</summary>
@@ -414,12 +372,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_content.AccessAsync(caller, workspaceId, listId, PlatformAction.DeleteItem, cancellationToken), request, "workspaceId", "listId", "itemId").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _content.DeleteItemAsync(caller, workspaceId, listId, itemId, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.DeleteItemAsync(caller, workspaceId, listId, itemId, cancellationToken, UnknownAfterGate(request, "workspaceId", "listId", "itemId"))).ConfigureAwait(false));
     }
 
     /// <summary>Adds an email to a workspace.</summary>
@@ -453,12 +406,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.BadRequest(MemberFieldError(request, "role", role, "role: required", "role: invalid")!));
         }
 
-        if (await AfterAccess(_members.AccessAsync(caller, workspaceId, PlatformAction.AddWorkspaceMember, cancellationToken), request, "workspaceId", "email", "role").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _members.AddToWorkspaceAsync(caller, workspaceId, emailText, roleText, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.AddToWorkspaceAsync(caller, workspaceId, emailText, roleText, cancellationToken, UnknownAfterGate(request, "workspaceId", "email", "role"))).ConfigureAwait(false));
     }
 
     /// <summary>Changes a workspace role.</summary>
@@ -492,12 +440,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.BadRequest(MemberFieldError(request, "role", role, "role: required", "role: invalid")!));
         }
 
-        if (await AfterAccess(_members.AccessAsync(caller, workspaceId, PlatformAction.ChangeWorkspaceRole, cancellationToken), request, "workspaceId", "email", "role").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _members.ChangeRoleAsync(caller, workspaceId, emailText, roleText, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.ChangeRoleAsync(caller, workspaceId, emailText, roleText, cancellationToken, UnknownAfterGate(request, "workspaceId", "email", "role"))).ConfigureAwait(false));
     }
 
     /// <summary>Removes a workspace role.</summary>
@@ -524,12 +467,7 @@ public sealed class AgentConnectTools
             return Error(PlatformError.BadRequest(MemberFieldError(request, "email", email, "email: required", "email: invalid format")!));
         }
 
-        if (await AfterAccess(_members.AccessAsync(caller, workspaceId, PlatformAction.RemoveWorkspaceMember, cancellationToken), request, "workspaceId", "email").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
-        return ToResult(await Guarded(() => _members.RemoveFromWorkspaceAsync(caller, workspaceId, emailText, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.RemoveFromWorkspaceAsync(caller, workspaceId, emailText, cancellationToken, UnknownAfterGate(request, "workspaceId", "email"))).ConfigureAwait(false));
     }
 
     /// <summary>Lists workspace members.</summary>
@@ -553,13 +491,8 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (await AfterAccess(_members.AccessAsync(caller, workspaceId, PlatformAction.ListWorkspaceMembers, cancellationToken), request, "workspaceId", "pageSize", "continuation").ConfigureAwait(false) is { } extra)
-        {
-            return extra;
-        }
-
         var (size, specified, token) = Page(request, pageSize, continuation);
-        return ToResult(await Guarded(() => _members.ListWorkspaceMembersAsync(caller, workspaceId, size, specified, token, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.ListWorkspaceMembersAsync(caller, workspaceId, size, specified, token, cancellationToken, UnknownAfterGate(request, "workspaceId", "pageSize", "continuation"))).ConfigureAwait(false));
     }
 
     /// <summary>Sets or clears the TenantOwner flag. FR-9.</summary>
@@ -687,15 +620,13 @@ public sealed class AgentConnectTools
         return element.TryGetInt32(out number) && number >= 1;
     }
 
-    private async Task<CallToolResult?> AfterAccess(Task<PlatformError?> access, RequestContext<CallToolRequestParams>? request, params string[] known)
+    private static Func<PlatformError?> UnknownAfterGate(RequestContext<CallToolRequestParams>? request, params string[] known)
     {
-        var denied = await access.ConfigureAwait(false);
-        if (denied is not null)
+        return () =>
         {
-            return Error(denied);
-        }
-
-        return Extra(request, known);
+            var unknown = UnknownArguments(request, known);
+            return unknown.Count == 0 ? null : PlatformError.BadRequest(unknown[0] + ": unknown field");
+        };
     }
 
     private static CallToolResult? Extra(RequestContext<CallToolRequestParams>? request, params string[] known)

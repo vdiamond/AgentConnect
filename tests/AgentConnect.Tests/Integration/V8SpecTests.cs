@@ -455,6 +455,9 @@ public sealed class V8SpecTests
         var workspace = await WorkspaceAsync(owner.Token);
         await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token);
         var list = await ListAsync(owner.Token, workspace);
+        var other = await _session.AddMemberAsync(owner.Token, "seat");
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = other, role = "WorkspaceRead" }, owner.Token);
+        Assert.Equal(200, (await RawAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/items/i", """{"title":"a","status":"open","priority":1,"due":"2026-11-25T00:00:00Z","done":false,"tags":["a"]}""", owner.Token)).Status);
         var calls = new (string Name, Dictionary<string, object?> Args)[]
         {
             ("list_workspaces", new Dictionary<string, object?> { ["foo"] = 1 }),
@@ -470,8 +473,8 @@ public sealed class V8SpecTests
             ("upsert_item", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["data"] = Session.Node("{}"), ["foo"] = 1 }),
             ("delete_item", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["itemId"] = "i", ["foo"] = 1 }),
             ("invite_member", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = "a@example.com", ["role"] = "WorkspaceRead", ["foo"] = 1 }),
-            ("change_workspace_role", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = "a@example.com", ["role"] = "WorkspaceRead", ["foo"] = 1 }),
-            ("revoke_workspace_access", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = "a@example.com", ["foo"] = 1 }),
+            ("change_workspace_role", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = other, ["role"] = "WorkspaceWrite", ["foo"] = 1 }),
+            ("revoke_workspace_access", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = other, ["foo"] = 1 }),
             ("list_workspace_members", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["foo"] = 1 }),
             ("set_tenant_owner", new Dictionary<string, object?> { ["email"] = owner.Email, ["isTenantOwner"] = true, ["foo"] = 1 }),
         };
@@ -501,6 +504,65 @@ public sealed class V8SpecTests
         });
         Assert.True(hidden.IsError);
         Assert.Equal("$: not found", hidden.Text);
+    }
+
+    [Fact]
+    [Trait("T", "T-35")]
+    [Trait("T", "T-72")]
+    public async Task GateReadFault_KeepsTheStorageTexts()
+    {
+        var owner = await _session.CreateTenantAsync("Gate");
+        var workspace = await WorkspaceAsync(owner.Token);
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token);
+        var database = _session.Platform.Database;
+        database.ThrottleRetryAfter = TimeSpan.FromSeconds(4);
+        try
+        {
+            database.ReadFault = ItemWriteFault.Throttled;
+            var throttled = await _session.ToolAsync(owner.Token, "list_lists", new Dictionary<string, object?> { ["workspaceId"] = workspace });
+            Assert.True(throttled.IsError);
+            Assert.Equal("$: too many requests", throttled.Text);
+
+            database.ReadFault = ItemWriteFault.Unavailable;
+            var unavailable = await _session.ToolAsync(owner.Token, "list_lists", new Dictionary<string, object?> { ["workspaceId"] = workspace });
+            Assert.True(unavailable.IsError);
+            Assert.Equal("$: service unavailable", unavailable.Text);
+
+            database.ReadFault = ItemWriteFault.Unexpected;
+            var failed = await _session.ToolAsync(owner.Token, "list_lists", new Dictionary<string, object?> { ["workspaceId"] = workspace });
+            Assert.True(failed.IsError);
+            Assert.Equal("$: internal error", failed.Text);
+            Assert.DoesNotContain("activity", failed.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            database.ReadFault = ItemWriteFault.None;
+        }
+    }
+
+    [Fact]
+    [Trait("T", "T-30")]
+    public async Task DeleteMissingItem_IsNotFoundForAReader()
+    {
+        var owner = await _session.CreateTenantAsync("Reader");
+        var workspace = await WorkspaceAsync(owner.Token);
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token);
+        var list = await ListAsync(owner.Token, workspace);
+        var reader = await _session.AddMemberAsync(owner.Token, "reader");
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = reader, role = "WorkspaceRead" }, owner.Token);
+        await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(reader) + "/send-invitation", new { }, owner.Token);
+        var token = Session.TokenFrom(_session.Platform.Email.For(reader).Last().Body);
+        var tool = await _session.ToolAsync(token, "delete_item", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["itemId"] = "missing",
+        });
+        Assert.True(tool.IsError);
+        Assert.Equal("$: not found", tool.Text);
+        var rest = await _session.SendAsync(HttpMethod.Delete, "/workspaces/" + workspace + "/lists/" + list + "/items/missing", null, token);
+        Assert.Equal(404, rest.Status);
+        Assert.Equal("$: not found", Error(rest.Body));
     }
 
     [Fact]
@@ -577,6 +639,58 @@ public sealed class V8SpecTests
         finally
         {
             _session.Platform.Database.AfterListRead = null;
+        }
+
+        var schemaList = await ListAsync(owner.Token, next);
+        _session.Platform.Database.AfterListRead = () => SoftDeleteList(owner, next, schemaList);
+        try
+        {
+            var schema = await _session.SendAsync(HttpMethod.Put, "/workspaces/" + next + "/lists/" + schemaList + "/schema", JsonDocument.Parse(TaskSchema).RootElement, owner.Token);
+            Assert.Equal(404, schema.Status);
+            Assert.Equal("$: not found", Error(schema.Body));
+        }
+        finally
+        {
+            _session.Platform.Database.AfterListRead = null;
+        }
+
+        var created = await _session.SendAsync(HttpMethod.Post, "/workspaces", new { name = "Later" }, owner.Token);
+        Assert.Equal(200, created.Status);
+        var renamed = Json(created.Body).GetProperty("id").GetString()!;
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + renamed + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token);
+        _session.Platform.Database.AfterWorkspaceRead = () =>
+        {
+            _session.Platform.Database.AfterWorkspaceRead = null;
+            var caller = LoadCaller(owner);
+            var deleted = _session.Platform.Api.Services.GetRequiredService<WorkspaceService>().DeleteAsync(caller, renamed, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.True(deleted.IsSuccess);
+        };
+        try
+        {
+            var patched = await _session.SendAsync(HttpMethod.Patch, "/workspaces/" + renamed, new { name = "Moved" }, owner.Token);
+            Assert.Equal(404, patched.Status);
+            Assert.Equal("$: not found", Error(patched.Body));
+        }
+        finally
+        {
+            _session.Platform.Database.AfterWorkspaceRead = null;
+        }
+
+        _session.Platform.Database.AfterTenantRead = () =>
+        {
+            _session.Platform.Database.AfterTenantRead = null;
+            var deleted = _session.Platform.Api.Services.GetRequiredService<TenantService>().DeleteAsync(owner.TenantId, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.True(deleted.IsSuccess);
+        };
+        try
+        {
+            var settings = await _session.SendAsync(HttpMethod.Patch, "/tenant", new { pageSizeDefault = 20 }, owner.Token);
+            Assert.Equal(404, settings.Status);
+            Assert.Equal("$: not found", Error(settings.Body));
+        }
+        finally
+        {
+            _session.Platform.Database.AfterTenantRead = null;
         }
     }
 
@@ -672,6 +786,24 @@ public sealed class V8SpecTests
         Assert.Equal("$: expected Object, found Null", Error(unwrappedSchema.Body));
         var unwrappedItem = await RawAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/items/z", "null", owner.Token);
         Assert.Equal("$: expected Object, found Null", Error(unwrappedItem.Body));
+    }
+
+    private void SoftDeleteList((string TenantId, string Email, string Token) owner, string workspaceId, string listId)
+    {
+        _session.Platform.Database.AfterListRead = null;
+        var deleted = _session.Platform.Api.Services.GetRequiredService<ContentService>()
+            .DeleteListAsync(LoadCaller(owner), workspaceId, listId, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        Assert.True(deleted.IsSuccess);
+    }
+
+    private Caller LoadCaller((string TenantId, string Email, string Token) owner)
+    {
+        var tenant = _session.Platform.Api.Services.GetRequiredService<ITenantRepository>().GetAsync(owner.TenantId, CancellationToken.None).GetAwaiter().GetResult();
+        var members = _session.Platform.Api.Services.GetRequiredService<IMemberRepository>().ListAsync(owner.TenantId, 20, null, CancellationToken.None).GetAwaiter().GetResult();
+        var member = members.Items.Single(item => EmailRules.Same(item.Email, owner.Email));
+        return new Caller(member, tenant!);
     }
 
     private async Task<string> WorkspaceAsync(string token)

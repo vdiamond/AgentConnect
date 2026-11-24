@@ -257,8 +257,9 @@ public sealed class MemberService
     /// <param name="email">The raw email.</param>
     /// <param name="role">The raw API role.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The assignment.</returns>
-    public async Task<OperationResult<RoleAssignmentResult>> AddToWorkspaceAsync(Caller caller, string workspaceId, string? email, string? role, CancellationToken cancellationToken)
+    public async Task<OperationResult<RoleAssignmentResult>> AddToWorkspaceAsync(Caller caller, string workspaceId, string? email, string? role, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var workspace = await LiveWorkspaceAsync(caller, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace.Error is not null)
@@ -270,6 +271,11 @@ public sealed class MemberService
         if (denied is not null)
         {
             return OperationResult<RoleAssignmentResult>.Fail(denied);
+        }
+
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<RoleAssignmentResult>.Fail(blocked);
         }
 
         if (email is null)
@@ -311,8 +317,9 @@ public sealed class MemberService
     /// <param name="email">The raw email.</param>
     /// <param name="role">The raw API role.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The assignment. No email is sent.</returns>
-    public async Task<OperationResult<WorkspaceMemberView>> ChangeRoleAsync(Caller caller, string workspaceId, string? email, string? role, CancellationToken cancellationToken)
+    public async Task<OperationResult<WorkspaceMemberView>> ChangeRoleAsync(Caller caller, string workspaceId, string? email, string? role, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var workspace = await LiveWorkspaceAsync(caller, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace.Error is not null)
@@ -332,6 +339,11 @@ public sealed class MemberService
         if (denied is not null)
         {
             return OperationResult<WorkspaceMemberView>.Fail(denied);
+        }
+
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<WorkspaceMemberView>.Fail(blocked);
         }
 
         if (role is null)
@@ -367,8 +379,9 @@ public sealed class MemberService
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="email">The raw email.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The confirmation.</returns>
-    public async Task<OperationResult<DeletedResult>> RemoveFromWorkspaceAsync(Caller caller, string workspaceId, string? email, CancellationToken cancellationToken)
+    public async Task<OperationResult<DeletedResult>> RemoveFromWorkspaceAsync(Caller caller, string workspaceId, string? email, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var workspace = await LiveWorkspaceAsync(caller, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace.Error is not null)
@@ -388,6 +401,11 @@ public sealed class MemberService
             return OperationResult<DeletedResult>.Fail(denied);
         }
 
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<DeletedResult>.Fail(blocked);
+        }
+
         var removed = await UpdateMemberAsync(located.Value.Member.TenantId, located.Value.Member.Id, currentMember =>
         {
             currentMember.WorkspaceRoles.Remove(workspaceId);
@@ -403,8 +421,9 @@ public sealed class MemberService
     /// <param name="pageSizeSpecified">Whether a page size was sent.</param>
     /// <param name="continuation">The continuation token, or null.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The page.</returns>
-    public async Task<OperationResult<WorkspaceMemberPageResult>> ListWorkspaceMembersAsync(Caller caller, string workspaceId, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken)
+    public async Task<OperationResult<WorkspaceMemberPageResult>> ListWorkspaceMembersAsync(Caller caller, string workspaceId, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var workspace = await LiveWorkspaceAsync(caller, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace.Error is not null)
@@ -416,6 +435,11 @@ public sealed class MemberService
         if (denied is not null)
         {
             return OperationResult<WorkspaceMemberPageResult>.Fail(denied);
+        }
+
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<WorkspaceMemberPageResult>.Fail(blocked);
         }
 
         var fingerprint = "workspace-members|" + caller.Tenant.Id + "|" + workspaceId;

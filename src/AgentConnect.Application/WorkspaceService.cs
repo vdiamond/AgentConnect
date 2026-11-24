@@ -190,8 +190,9 @@ public sealed class WorkspaceService
     /// <param name="name">The name field.</param>
     /// <param name="description">The description field.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The workspace.</returns>
-    public async Task<OperationResult<WorkspaceUpdatedResult>> UpdateAsync(Caller caller, string workspaceId, OptionalText name, OptionalText description, CancellationToken cancellationToken)
+    public async Task<OperationResult<WorkspaceUpdatedResult>> UpdateAsync(Caller caller, string workspaceId, OptionalText name, OptionalText description, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var workspace = await _workspaces.GetAsync(caller.Tenant.Id, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace is null || workspace.DeletedAt is not null || !caller.CanSee(workspaceId))
@@ -203,6 +204,11 @@ public sealed class WorkspaceService
         if (denied is not null)
         {
             return OperationResult<WorkspaceUpdatedResult>.Fail(denied);
+        }
+
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<WorkspaceUpdatedResult>.Fail(blocked);
         }
 
         var nextName = workspace.Name;
