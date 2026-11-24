@@ -51,7 +51,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            _tenants[tenant.Id] = Clone(tenant);
+            Create(_tenants, tenant.Id, tenant);
         }
 
         return Task.CompletedTask;
@@ -62,7 +62,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            _tenants[tenant.Id] = Clone(tenant);
+            Replace(_tenants, tenant.Id, tenant);
         }
 
         return Task.CompletedTask;
@@ -110,7 +110,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            _members[Key(member.TenantId, member.Id)] = Clone(member);
+            Create(_members, Key(member.TenantId, member.Id), member);
         }
 
         return Task.CompletedTask;
@@ -121,7 +121,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            _members[Key(member.TenantId, member.Id)] = Clone(member);
+            Replace(_members, Key(member.TenantId, member.Id), member);
         }
 
         return Task.CompletedTask;
@@ -178,7 +178,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            _workspaces[Key(workspace.TenantId, workspace.Id)] = Clone(workspace);
+            Create(_workspaces, Key(workspace.TenantId, workspace.Id), workspace);
         }
 
         return Task.CompletedTask;
@@ -189,7 +189,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            _workspaces[Key(workspace.TenantId, workspace.Id)] = Clone(workspace);
+            Replace(_workspaces, Key(workspace.TenantId, workspace.Id), workspace);
         }
 
         return Task.CompletedTask;
@@ -250,7 +250,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            _lists[Key(list.TenantId, list.WorkspaceId, list.Id)] = Clone(list);
+            Create(_lists, Key(list.TenantId, list.WorkspaceId, list.Id), list);
         }
 
         return Task.CompletedTask;
@@ -261,7 +261,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            _lists[Key(list.TenantId, list.WorkspaceId, list.Id)] = Clone(list);
+            Replace(_lists, Key(list.TenantId, list.WorkspaceId, list.Id), list);
         }
 
         return Task.CompletedTask;
@@ -316,7 +316,14 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         ThrowFault();
         lock (_gate)
         {
-            _items[Key(item.TenantId, item.WorkspaceId, item.ListId, item.Id)] = Clone(item);
+            var key = Key(item.TenantId, item.WorkspaceId, item.ListId, item.Id);
+            if (_items.TryGetValue(key, out var stored))
+            {
+                item.Created = stored.Created;
+            }
+
+            item.ETag = Guid.NewGuid().ToString("N");
+            _items[key] = Clone(item);
         }
 
         return Task.CompletedTask;
@@ -598,6 +605,25 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         {
             return false;
         }
+    }
+
+    private static void Create<T>(Dictionary<string, T> store, string key, T incoming)
+        where T : IConcurrencyDocument
+    {
+        incoming.ETag = Guid.NewGuid().ToString("N");
+        store[key] = Clone(incoming);
+    }
+
+    private static void Replace<T>(Dictionary<string, T> store, string key, T incoming)
+        where T : IConcurrencyDocument
+    {
+        if (!store.TryGetValue(key, out var stored) || !string.Equals(stored.ETag, incoming.ETag, StringComparison.Ordinal))
+        {
+            throw new StorageConflictException();
+        }
+
+        incoming.ETag = Guid.NewGuid().ToString("N");
+        store[key] = Clone(incoming);
     }
 
     private static T Clone<T>(T value)

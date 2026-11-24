@@ -1,11 +1,21 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace AgentConnect;
 
 /// <summary>
+/// A document replaced with <c>If-Match</c> so a stale snapshot cannot overwrite a newer write.
+/// </summary>
+public interface IConcurrencyDocument
+{
+    /// <summary>Gets or sets the concurrency token. Null until the document is stored.</summary>
+    string? ETag { get; set; }
+}
+
+/// <summary>
 /// A Tenant document. Partition key is <c>id</c>.
 /// </summary>
-public sealed class TenantDocument
+public sealed class TenantDocument : IConcurrencyDocument
 {
     /// <summary>Gets or sets the tenant id.</summary>
     [JsonPropertyName("id")]
@@ -36,12 +46,16 @@ public sealed class TenantDocument
     /// Gets or sets subscription info. Billing is out of scope; the field is stored as JSON null until its shape is defined.
     /// </summary>
     public object? Subscription { get; set; }
+
+    /// <inheritdoc />
+    [JsonPropertyName("_etag")]
+    public string? ETag { get; set; }
 }
 
 /// <summary>
 /// A Member document. Partition key is <c>tenantId</c>.
 /// </summary>
-public sealed class MemberDocument
+public sealed class MemberDocument : IConcurrencyDocument
 {
     /// <summary>Gets or sets the member id.</summary>
     [JsonPropertyName("id")]
@@ -76,12 +90,16 @@ public sealed class MemberDocument
 
     /// <summary>Gets or sets when an email last contained the token, in UTC.</summary>
     public DateTimeOffset? LastTokenSent { get; set; }
+
+    /// <inheritdoc />
+    [JsonPropertyName("_etag")]
+    public string? ETag { get; set; }
 }
 
 /// <summary>
 /// A Workspace document. Partition key is <c>tenantId</c>.
 /// </summary>
-public sealed class WorkspaceDocument
+public sealed class WorkspaceDocument : IConcurrencyDocument
 {
     /// <summary>Gets or sets the workspace id.</summary>
     [JsonPropertyName("id")]
@@ -104,12 +122,16 @@ public sealed class WorkspaceDocument
 
     /// <summary>Gets or sets when the workspace was marked deleted. Null unless deleted.</summary>
     public DateTimeOffset? DeletedAt { get; set; }
+
+    /// <inheritdoc />
+    [JsonPropertyName("_etag")]
+    public string? ETag { get; set; }
 }
 
 /// <summary>
 /// A List document. Hierarchical partition key is <c>tenantId</c>, <c>workspaceId</c>.
 /// </summary>
-public sealed class ListDocument
+public sealed class ListDocument : IConcurrencyDocument
 {
     /// <summary>Gets or sets the list id.</summary>
     [JsonPropertyName("id")]
@@ -141,12 +163,16 @@ public sealed class ListDocument
 
     /// <summary>Gets or sets when the list was marked deleted. Null unless deleted.</summary>
     public DateTimeOffset? DeletedAt { get; set; }
+
+    /// <inheritdoc />
+    [JsonPropertyName("_etag")]
+    public string? ETag { get; set; }
 }
 
 /// <summary>
 /// An Item document. Hierarchical partition key is <c>tenantId</c>, <c>workspaceId</c>, <c>listId</c>.
 /// </summary>
-public sealed class ItemDocument
+public sealed class ItemDocument : IConcurrencyDocument
 {
     /// <summary>Gets or sets the item id.</summary>
     [JsonPropertyName("id")]
@@ -161,8 +187,19 @@ public sealed class ItemDocument
     /// <summary>Gets or sets the list id.</summary>
     public string ListId { get; set; } = "";
 
-    /// <summary>Gets or sets the item JSON object.</summary>
-    public string Data { get; set; } = "";
+    /// <summary>Gets or sets the item JSON object. Stored as an object, not a string, so Cosmos can filter it.</summary>
+    public JsonElement Data { get; set; }
+
+    /// <summary>
+    /// Parses item JSON into a <see cref="JsonElement"/> that outlives the source document.
+    /// </summary>
+    /// <param name="json">The item JSON object.</param>
+    /// <returns>The element.</returns>
+    public static JsonElement ParseData(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.Clone();
+    }
 
     /// <summary>Gets or sets the schema version the data was validated against.</summary>
     public int SchemaVersion { get; set; }
@@ -172,6 +209,10 @@ public sealed class ItemDocument
 
     /// <summary>Gets or sets when the item was last written, in UTC.</summary>
     public DateTimeOffset Updated { get; set; }
+
+    /// <inheritdoc />
+    [JsonPropertyName("_etag")]
+    public string? ETag { get; set; }
 }
 
 /// <summary>

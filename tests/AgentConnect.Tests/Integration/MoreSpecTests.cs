@@ -345,10 +345,42 @@ public sealed class MoreSpecTests
         await Expect(ww, HttpMethod.Get, "/workspaces/" + workspace + "/members", null, 403);
     }
 
-    [Fact(Skip = "Requires the Cosmos DB emulator (AGENTCONNECT_COSMOS_EMULATOR). This environment has no Docker and no emulator; the in-memory store covers the same behaviour.")]
-    [Trait("Requires", "CosmosEmulator")]
-    public void CosmosRoundTrip_IsEmulatorOnly()
+    [Fact]
+    [Trait("T", "T-22")]
+    public async Task GetItem_ReturnsTheStoredVersionWithoutRevalidation()
     {
+        var owner = await _session.CreateTenantAsync("OldItem");
+        var workspace = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces", new { name = "Ops", members = new[] { new { email = owner.Email, role = "WorkspaceOwner" } } }, owner.Token)).Body).GetProperty("id").GetString()!;
+        var loose = """{"properties":[{"name":"title","type":"String","required":true}]}""";
+        var list = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", new { name = "Loose", schema = JsonDocument.Parse(loose).RootElement }, owner.Token)).Body).GetProperty("id").GetString()!;
+        await PutItem(owner.Token, workspace, list, "old", "{\"title\":\"kept\"}");
+        Assert.Equal(200, (await _session.SendAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/schema", JsonDocument.Parse(TaskSchema).RootElement, owner.Token)).Status);
+        var read = Json((await _session.SendAsync(HttpMethod.Get, "/workspaces/" + workspace + "/lists/" + list + "/items/old", null, owner.Token)).Body);
+        Assert.Equal(1, read.GetProperty("schemaVersion").GetInt32());
+        Assert.Equal("kept", read.GetProperty("data").GetProperty("title").GetString());
+    }
+
+    [Fact]
+    [Trait("T", "T-36")]
+    [Trait("T", "T-10")]
+    public async Task HiddenWorkspaceIs404_AndOwnerCannotDemoteSelfByInvite()
+    {
+        var owner = await _session.CreateTenantAsync("Hidden");
+        var workspace = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces", new { name = "Ops" }, owner.Token)).Body).GetProperty("id").GetString()!;
+        var workspaceOwner = await _session.AddMemberAsync(owner.Token, "wo");
+        var outsider = await _session.AddMemberAsync(owner.Token, "out");
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = workspaceOwner, role = "WorkspaceOwner" }, owner.Token);
+        var list = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", new { name = "Tasks", schema = JsonDocument.Parse(TaskSchema).RootElement }, await Invite(owner.Token, workspaceOwner))).Body).GetProperty("id").GetString()!;
+        var outsiderToken = await Invite(owner.Token, outsider);
+        var hidden = await _session.SendAsync(HttpMethod.Get, "/workspaces/" + workspace + "/lists/" + list + "/items?shape=ids", null, outsiderToken);
+        Assert.Equal(404, hidden.Status);
+        var tenantOwner = await _session.SendAsync(HttpMethod.Get, "/workspaces/" + workspace + "/lists/" + list + "/items?shape=ids", null, owner.Token);
+        Assert.Equal(403, tenantOwner.Status);
+        Assert.Equal("$: not allowed", Error(tenantOwner.Body));
+        var ownerToken = await Invite(owner.Token, workspaceOwner);
+        var demotion = await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = workspaceOwner, role = "WorkspaceRead" }, ownerToken);
+        Assert.Equal(403, demotion.Status);
+        Assert.Equal("$: not allowed on yourself", Error(demotion.Body));
     }
 
     #region private

@@ -1,6 +1,9 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
+using AgentConnect.Tests.Support;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentConnect.Tests.Unit;
 
@@ -52,7 +55,7 @@ public sealed class CoreTests
     }
 
     [Fact]
-    [Trait("T", "T-45")]
+    [Trait("T", "T-53")]
     public void ItemIdRules_RejectsSlash()
     {
         Assert.False(ItemIdRules.IsValid("a/b"));
@@ -117,13 +120,60 @@ public sealed class CoreTests
 
     [Fact]
     [Trait("T", "T-62")]
-    public void AuditSampling_KeepsEveryAuditEventWhenOtherEventsAreDropped()
+    public async Task AuditRecorder_KeepsEveryEventWhenSamplingDropsOtherTelemetry()
     {
-        for (var bucket = 0; bucket < 1000; bucket++)
+        var auditEvents = await ApplicationInsightsAuditRecorder.ExerciseProductionSamplingAsync(200, CancellationToken.None);
+        Assert.Equal(200, auditEvents);
+    }
+
+    [Fact]
+    public void ContinuationToken_RejectsATamperedPageSizeAndClampsAtThePlatformCap()
+    {
+        ContinuationTokens.Configure(Convert.ToBase64String(new byte[32]));
+        var issued = ContinuationTokens.Issue("fingerprint", 5000, "cursor");
+        Assert.True(ContinuationTokens.TryOpen(issued, "fingerprint", out var clamped, out var cursor));
+        Assert.Equal(1000, clamped);
+        Assert.Equal("cursor", cursor);
+        var json = Encoding.UTF8.GetString(Convert.FromBase64String(Pad(issued.Replace('-', '+').Replace('_', '/'))));
+        var tampered = json.Replace("\"P\":1000", "\"P\":5000", StringComparison.Ordinal);
+        var forged = Convert.ToBase64String(Encoding.UTF8.GetBytes(tampered)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        Assert.False(ContinuationTokens.TryOpen(forged, "fingerprint", out _, out _));
+    }
+
+    [Fact]
+    public async Task Invite_DoesNotRestoreATokenRegeneratedWhileTheMailIsSending()
+    {
+        var database = new MemoryDatabase();
+        var email = new InterruptingEmail();
+        var key = Convert.ToBase64String(new byte[32]);
+        var options = new AgentConnectOptions
         {
-            Assert.True(AuditTelemetry.Keep(AuditTelemetry.EventName, 0, bucket));
-            Assert.False(AuditTelemetry.Keep("request", 0, bucket));
-        }
+            TokenEncryptionKey = key,
+            McpServerUrl = "http://localhost/mcp",
+            RestApiUrl = "http://localhost",
+        };
+        var tokens = new TokenService(key);
+        var members = new MemberService(database, database, tokens, email, new RecordingAudit(), new SystemClock(), options, NullLogger<MemberService>.Instance);
+        var tenants = new TenantService(database, database, tokens, email, new RecordingAudit(), new SystemClock(), options, NullLogger<TenantService>.Instance);
+        var created = await tenants.CreateAsync("Race", "owner@example.com", CancellationToken.None);
+        Assert.True(created.IsSuccess);
+        var tenant = (await database.GetAsync(created.Value!.Id, CancellationToken.None))!;
+        var owner = (await database.GetAsync(tenant.Id, tenant.FirstMemberId, CancellationToken.None))!;
+        var caller = new Caller(owner, tenant);
+        var added = await members.AddAsync(caller, "ann@example.com", CancellationToken.None);
+        Assert.True(added.IsSuccess);
+        var before = (await database.GetAsync(tenant.Id, added.Value!.Id, CancellationToken.None))!;
+        email.OnSend = async () =>
+        {
+            var regenerated = await members.RegenerateAsync(caller, "ann@example.com", CancellationToken.None);
+            Assert.True(regenerated.IsSuccess);
+        };
+        var sent = await members.SendInvitationAsync(caller, "ann@example.com", CancellationToken.None);
+        Assert.True(sent.IsSuccess);
+        Assert.True(sent.Value!.EmailSent);
+        var after = (await database.GetAsync(tenant.Id, added.Value.Id, CancellationToken.None))!;
+        Assert.NotEqual(before.TokenHash, after.TokenHash);
+        Assert.True(after.InvitationSent);
     }
 
     [Fact]
@@ -279,7 +329,7 @@ public sealed class CoreTests
             TenantId = "t",
             WorkspaceId = "w",
             ListId = "l",
-            Data = data,
+            Data = ItemDocument.ParseData(data),
             SchemaVersion = 3,
             Created = DateTimeOffset.Parse(updated),
             Updated = DateTimeOffset.Parse(updated),
@@ -301,6 +351,22 @@ public sealed class CoreTests
         }
 
         return new Caller(member, new TenantDocument { Id = "t", Status = TenantStatuses.Active });
+    }
+
+    private static string Pad(string text)
+    {
+        var remainder = text.Length % 4;
+        return remainder == 0 ? text : text + new string('=', 4 - remainder);
+    }
+
+    private sealed class InterruptingEmail : IEmailSender
+    {
+        public Func<Task>? OnSend { get; set; }
+
+        public Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
+        {
+            return OnSend is null ? Task.CompletedTask : OnSend();
+        }
     }
 
     #endregion

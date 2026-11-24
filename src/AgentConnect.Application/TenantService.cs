@@ -146,8 +146,14 @@ public sealed class TenantService
             return OperationResult<DeletedResult>.Fail(PlatformError.NotFound);
         }
 
-        tenant.DeletedAt = _clock.UtcNow;
-        await _tenants.ReplaceAsync(tenant, cancellationToken).ConfigureAwait(false);
+        await DocumentUpdates.UpdateAsync(
+            ct => _tenants.GetAsync(tenantId, ct),
+            (current, ct) => _tenants.ReplaceAsync(current, ct),
+            current =>
+            {
+                current.DeletedAt = _clock.UtcNow;
+            },
+            cancellationToken).ConfigureAwait(false);
         Audit(PlatformSupport.PlatformOperator, AuditActions.TenantDeleted, ("tenantId", tenant.Id));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
     }
@@ -197,9 +203,17 @@ public sealed class TenantService
 
         if (nextDefault != caller.Tenant.PageSizeDefault || nextMax != caller.Tenant.PageSizeMax)
         {
+            await DocumentUpdates.UpdateAsync(
+                ct => _tenants.GetAsync(caller.Tenant.Id, ct),
+                (current, ct) => _tenants.ReplaceAsync(current, ct),
+                current =>
+                {
+                    current.PageSizeDefault = nextDefault;
+                    current.PageSizeMax = nextMax;
+                },
+                cancellationToken).ConfigureAwait(false);
             caller.Tenant.PageSizeDefault = nextDefault;
             caller.Tenant.PageSizeMax = nextMax;
-            await _tenants.ReplaceAsync(caller.Tenant, cancellationToken).ConfigureAwait(false);
             Audit(caller.Member.Id, AuditActions.TenantSettingsUpdated, ("tenantId", caller.Tenant.Id));
         }
 
@@ -255,14 +269,15 @@ public sealed class TenantService
             return false;
         }
 
-        member.InvitationSent = true;
-        member.LastTokenSent = PlatformSupport.After(_clock.UtcNow, member.LastTokenIssued);
-        if (member.LastTokenSent < member.LastTokenIssued)
-        {
-            member.LastTokenSent = member.LastTokenIssued;
-        }
-
-        await _members.ReplaceAsync(member, cancellationToken).ConfigureAwait(false);
+        await DocumentUpdates.UpdateAsync(
+            ct => _members.GetAsync(member.TenantId, member.Id, ct),
+            (current, ct) => _members.ReplaceAsync(current, ct),
+            current =>
+            {
+                current.InvitationSent = true;
+                current.LastTokenSent = PlatformSupport.After(_clock.UtcNow, current.LastTokenIssued);
+            },
+            cancellationToken).ConfigureAwait(false);
         Audit(invitedBy == "AgentConnect" ? PlatformSupport.PlatformOperator : invitedBy, AuditActions.InvitationSent, ("tenantId", tenant.Id), ("memberId", member.Id));
         return true;
     }
@@ -288,8 +303,17 @@ public sealed class TenantService
 
         if (tenant.Value!.Status != status)
         {
-            tenant.Value.Status = status;
-            await _tenants.ReplaceAsync(tenant.Value, cancellationToken).ConfigureAwait(false);
+            await DocumentUpdates.UpdateAsync(
+                ct => _tenants.GetAsync(tenant.Value.Id, ct),
+                (current, ct) => _tenants.ReplaceAsync(current, ct),
+                current =>
+                {
+                    if (current.DeletedAt is null)
+                    {
+                        current.Status = status;
+                    }
+                },
+                cancellationToken).ConfigureAwait(false);
             Audit(PlatformSupport.PlatformOperator, action, ("tenantId", tenant.Value.Id));
         }
 

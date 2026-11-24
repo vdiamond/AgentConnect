@@ -1,6 +1,8 @@
 using Microsoft.ApplicationInsights;
 using Microsoft.ApplicationInsights.Extensibility;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry;
+using OpenTelemetry.Logs;
 
 namespace AgentConnect;
 
@@ -59,12 +61,7 @@ public sealed class ApplicationInsightsAuditRecorder : IAuditRecorder
     public ApplicationInsightsAuditRecorder(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
-        var configuration = new TelemetryConfiguration
-        {
-            ConnectionString = connectionString,
-            SamplingRatio = 1,
-        };
-        _client = new TelemetryClient(configuration);
+        _client = new TelemetryClient(CreateConfiguration(connectionString));
     }
 
     /// <summary>
@@ -95,11 +92,80 @@ public sealed class ApplicationInsightsAuditRecorder : IAuditRecorder
         _client.TrackEvent(AuditTelemetry.EventName, properties);
     }
 
+    /// <summary>
+    /// Flushes the Application Insights buffer so a scale-to-zero stop does not drop audit events.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    public Task FlushAsync(CancellationToken cancellationToken)
+    {
+        return _client.FlushAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Records audit events through <see cref="Record"/> and flushes them. Trace sampling is set to zero.
+    /// Custom events are logs, so the audit events still arrive.
+    /// </summary>
+    /// <param name="count">How many audit events to record.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>How many <see cref="AuditTelemetry.EventName"/> events the exporter saw, including their targets.</returns>
+    public static async Task<int> ExerciseProductionSamplingAsync(int count, CancellationToken cancellationToken)
+    {
+        const string connection = "InstrumentationKey=00000000-0000-0000-0000-000000000000";
+        var auditProbe = new AuditLogProbe();
+        var configuration = CreateConfiguration(connection);
+        configuration.SamplingRatio = 0;
+        configuration.ConfigureOpenTelemetryBuilder(builder =>
+        {
+            builder.WithLogging(logging => logging.AddProcessor(auditProbe));
+        });
+        var recorder = new ApplicationInsightsAuditRecorder(new TelemetryClient(configuration));
+        for (var index = 0; index < count; index++)
+        {
+            recorder.Record(new AuditEntry("actor", AuditActions.TenantCreated, DateTimeOffset.UtcNow, new Dictionary<string, string> { ["tenantId"] = "t" }));
+        }
+
+        await recorder.FlushAsync(cancellationToken).ConfigureAwait(false);
+        return auditProbe.Names.Count(name => name.Contains("microsoft.custom_event.name=" + AuditTelemetry.EventName, StringComparison.Ordinal) && name.Contains("target.tenantId=t", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// Builds the audit telemetry configuration. Sampling is 100 percent so audit events are not dropped.
+    /// </summary>
+    /// <param name="connectionString">The Application Insights connection string.</param>
+    /// <returns>The configuration.</returns>
+    public static TelemetryConfiguration CreateConfiguration(string connectionString)
+    {
+        return new TelemetryConfiguration
+        {
+            ConnectionString = connectionString,
+            SamplingRatio = 1,
+        };
+    }
+
     #region private
 
     private readonly TelemetryClient _client;
 
     #endregion
+}
+
+/// <summary>
+/// Counts telemetry log records so tests can show that audit events survive sampling.
+/// </summary>
+public sealed class AuditLogProbe : BaseProcessor<LogRecord>
+{
+    /// <summary>Gets the record names that reached the exporter.</summary>
+    public List<string> Names { get; } = [];
+
+    /// <inheritdoc />
+    public override void OnEnd(LogRecord data)
+    {
+        var attributes = data.Attributes is null
+            ? ""
+            : string.Join(",", data.Attributes.Select(pair => pair.Key + "=" + pair.Value));
+        Names.Add(attributes);
+    }
 }
 
 /// <summary>
@@ -121,7 +187,12 @@ public sealed class LoggingAuditRecorder : IAuditRecorder
     public void Record(AuditEntry entry)
     {
         ArgumentNullException.ThrowIfNull(entry);
-        _logger.LogInformation("Audit {Action} by {ActorId} at {Occurred}.", entry.Action, entry.ActorId, entry.Occurred);
+        _logger.LogInformation(
+            "Audit {Action} by {ActorId} at {Occurred} targets {Targets}.",
+            entry.Action,
+            entry.ActorId,
+            entry.Occurred,
+            string.Join(',', entry.Targets.Select(pair => pair.Key + "=" + pair.Value)));
     }
 
     #region private

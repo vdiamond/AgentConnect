@@ -307,7 +307,7 @@ public static class ItemQueryParser
         var prefix = "where[" + index.ToString(CultureInfo.InvariantCulture) + "]";
         if (element.ValueKind != JsonValueKind.Object)
         {
-            return OperationResult<QueryCondition>.Fail(PlatformError.BadRequest(prefix + ": expected object, found " + JsonKinds.Of(element)));
+            return OperationResult<QueryCondition>.Fail(PlatformError.BadRequest(prefix + ": expected Object, found " + JsonKinds.Of(element)));
         }
 
         JsonElement pathElement = default;
@@ -446,7 +446,7 @@ public static class ItemQueryParser
     {
         if (element.ValueKind != JsonValueKind.Object)
         {
-            return OperationResult<QueryOrder>.Fail(PlatformError.BadRequest("orderBy: expected object, found " + JsonKinds.Of(element)));
+            return OperationResult<QueryOrder>.Fail(PlatformError.BadRequest("orderBy: expected Object, found " + JsonKinds.Of(element)));
         }
 
         JsonElement pathElement = default;
@@ -734,8 +734,26 @@ public static class ContinuationTokens
     /// <returns>The opaque token.</returns>
     public static string Issue(string fingerprint, int pageSize, string storeCursor)
     {
-        var json = JsonSerializer.Serialize(new Envelope(1, fingerprint, pageSize, storeCursor));
+        var bounded = pageSize > PageRules.PlatformPageSizeMax ? PageRules.PlatformPageSizeMax : pageSize;
+        var envelope = new Envelope(1, fingerprint, bounded, storeCursor, "");
+        envelope = envelope with { M = Mac(envelope) };
+        var json = JsonSerializer.Serialize(envelope);
         return Base64Url(Encoding.UTF8.GetBytes(json));
+    }
+
+    /// <summary>
+    /// Installs the key that signs continuation tokens. Called when the token encryption key is loaded.
+    /// </summary>
+    /// <param name="encryptionKeyBase64">The token encryption key.</param>
+    public static void Configure(string encryptionKeyBase64)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(encryptionKeyBase64);
+        if (_key is not null)
+        {
+            return;
+        }
+
+        _key = SHA256.HashData(Encoding.UTF8.GetBytes("agentconnect-continuation\n" + encryptionKeyBase64));
     }
 
     /// <summary>
@@ -770,7 +788,12 @@ public static class ContinuationTokens
             return false;
         }
 
-        if (envelope is null || envelope.V != 1 || envelope.P < 1 || string.IsNullOrEmpty(envelope.C) || string.IsNullOrEmpty(envelope.H))
+        if (envelope is null || envelope.V != 1 || envelope.P < 1 || string.IsNullOrEmpty(envelope.C) || string.IsNullOrEmpty(envelope.H) || string.IsNullOrEmpty(envelope.M))
+        {
+            return false;
+        }
+
+        if (!MacMatches(envelope))
         {
             return false;
         }
@@ -782,14 +805,49 @@ public static class ContinuationTokens
             return false;
         }
 
-        pageSize = envelope.P;
+        pageSize = envelope.P > PageRules.PlatformPageSizeMax ? PageRules.PlatformPageSizeMax : envelope.P;
         storeCursor = envelope.C;
         return true;
     }
 
     #region private
 
-    private sealed record Envelope(int V, string H, int P, string C);
+    private static byte[]? _key;
+
+    private sealed record Envelope(int V, string H, int P, string C, string M);
+
+    private static string Mac(Envelope envelope)
+    {
+        if (_key is null)
+        {
+            throw new InvalidOperationException("Continuation tokens are not configured.");
+        }
+
+        var payload = Encoding.UTF8.GetBytes(envelope.V.ToString(CultureInfo.InvariantCulture) + "|" + envelope.H + "|" + envelope.P.ToString(CultureInfo.InvariantCulture) + "|" + envelope.C);
+        return Convert.ToHexString(HMACSHA256.HashData(_key, payload));
+    }
+
+    private static bool MacMatches(Envelope envelope)
+    {
+        if (_key is null)
+        {
+            return false;
+        }
+
+        byte[] actual;
+        byte[] expected;
+        try
+        {
+            actual = Convert.FromHexString(envelope.M);
+            expected = Convert.FromHexString(Mac(envelope));
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+
+        return CryptographicOperations.FixedTimeEquals(actual, expected);
+    }
 
     private static string Base64Url(byte[] bytes)
     {
@@ -1069,28 +1127,27 @@ public static class ItemQueryEngine
             && TryReadLiteral(element, order.TypeName, out value);
     }
 
-    private static bool TryGetElement(string dataJson, string path, out JsonElement element)
+    private static bool TryGetElement(JsonElement data, string path, out JsonElement element)
     {
-        element = default;
-        try
+        element = data;
+        if (data.ValueKind != JsonValueKind.Object)
         {
-            using var document = JsonDocument.Parse(dataJson);
-            var current = document.RootElement;
-            foreach (var segment in path.Split('.'))
-            {
-                if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(segment, out current))
-                {
-                    return false;
-                }
-            }
-
-            element = current.Clone();
-            return true;
-        }
-        catch (JsonException)
-        {
+            element = default;
             return false;
         }
+
+        var current = data;
+        foreach (var segment in path.Split('.'))
+        {
+            if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(segment, out current))
+            {
+                element = default;
+                return false;
+            }
+        }
+
+        element = current.Clone();
+        return true;
     }
 
     private static bool TryReadLiteral(JsonElement element, string typeName, out QueryValue value)

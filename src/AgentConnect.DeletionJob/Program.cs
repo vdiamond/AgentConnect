@@ -18,7 +18,15 @@ public static class Program
         var builder = Host.CreateApplicationBuilder(args);
         builder.Services.AddAgentConnect(builder.Configuration);
         using var host = builder.Build();
-        var deletion = host.Services.GetRequiredService<DeletionService>();
-        await deletion.RunUntilQuietAsync(CancellationToken.None).ConfigureAwait(false);
+        await host.StartAsync().ConfigureAwait(false);
+        try
+        {
+            var deletion = host.Services.GetRequiredService<DeletionService>();
+            await deletion.RunUntilQuietAsync(host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping).ConfigureAwait(false);
+        }
+        finally
+        {
+            await host.StopAsync().ConfigureAwait(false);
+        }
     }
 }

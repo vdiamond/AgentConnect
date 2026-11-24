@@ -124,12 +124,14 @@ public sealed class MemberService
         }
 
         var issued = _tokens.Issue(member.Value!.TenantId, member.Value.Id);
-        member.Value.TokenHash = issued.Hash;
-        member.Value.TokenEncrypted = issued.Encrypted;
-        member.Value.LastTokenIssued = PlatformSupport.After(_clock.UtcNow, member.Value.LastTokenSent);
-        await _members.ReplaceAsync(member.Value, cancellationToken).ConfigureAwait(false);
-        Audit(caller.Member.Id, AuditActions.TokenRegenerated, ("tenantId", caller.Tenant.Id), ("memberId", member.Value.Id));
-        return OperationResult<TokenRegeneratedResult>.Ok(new TokenRegeneratedResult(member.Value.LastTokenIssued));
+        var stored = await UpdateMemberAsync(member.Value.TenantId, member.Value.Id, current =>
+        {
+            current.TokenHash = issued.Hash;
+            current.TokenEncrypted = issued.Encrypted;
+            current.LastTokenIssued = PlatformSupport.After(_clock.UtcNow, current.LastTokenSent);
+        }, cancellationToken).ConfigureAwait(false);
+        Audit(caller.Member.Id, AuditActions.TokenRegenerated, ("tenantId", caller.Tenant.Id), ("memberId", stored.Id));
+        return OperationResult<TokenRegeneratedResult>.Ok(new TokenRegeneratedResult(stored.LastTokenIssued));
     }
 
     /// <summary>Emails the stored token. FR-7.</summary>
@@ -206,14 +208,17 @@ public sealed class MemberService
             return OperationResult<MemberResult>.Fail(member.Error);
         }
 
-        if (member.Value!.IsTenantOwner != isTenantOwner)
+        var stored = member.Value!;
+        if (stored.IsTenantOwner != isTenantOwner)
         {
-            member.Value.IsTenantOwner = isTenantOwner;
-            await _members.ReplaceAsync(member.Value, cancellationToken).ConfigureAwait(false);
-            Audit(caller.Member.Id, AuditActions.TenantOwnerChanged, ("tenantId", caller.Tenant.Id), ("memberId", member.Value.Id));
+            stored = await UpdateMemberAsync(stored.TenantId, stored.Id, current =>
+            {
+                current.IsTenantOwner = isTenantOwner;
+            }, cancellationToken).ConfigureAwait(false);
+            Audit(caller.Member.Id, AuditActions.TenantOwnerChanged, ("tenantId", caller.Tenant.Id), ("memberId", stored.Id));
         }
 
-        return OperationResult<MemberResult>.Ok(ToResult(member.Value));
+        return OperationResult<MemberResult>.Ok(ToResult(stored));
     }
 
     /// <summary>Adds an email to a workspace. FR-19.</summary>
@@ -245,6 +250,16 @@ public sealed class MemberService
         if (!StoredRoles.TryParse(role, out var stored))
         {
             return OperationResult<RoleAssignmentResult>.Fail(PlatformError.BadRequest("role: invalid"));
+        }
+
+        var existing = await _members.FindByEmailAsync(caller.Tenant.Id, normalized, cancellationToken).ConfigureAwait(false);
+        if (existing is not null && existing.WorkspaceRoles.TryGetValue(workspaceId, out var currentRole))
+        {
+            var self = Permissions.AuthorizeWorkspace(caller, workspaceId, PlatformAction.ChangeWorkspaceRole, existing.Id, currentRole, stored);
+            if (self is not null)
+            {
+                return OperationResult<RoleAssignmentResult>.Fail(self);
+            }
         }
 
         return await AssignAsync(caller, workspace.Value!, normalized, stored, cancellationToken).ConfigureAwait(false);
@@ -292,8 +307,10 @@ public sealed class MemberService
 
         if (current != stored)
         {
-            member.WorkspaceRoles[workspaceId] = stored;
-            await _members.ReplaceAsync(member, cancellationToken).ConfigureAwait(false);
+            member = await UpdateMemberAsync(member.TenantId, member.Id, currentMember =>
+            {
+                currentMember.WorkspaceRoles[workspaceId] = stored;
+            }, cancellationToken).ConfigureAwait(false);
             Audit(caller.Member.Id, AuditActions.WorkspaceRoleChanged, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("memberId", member.Id));
         }
 
@@ -326,9 +343,11 @@ public sealed class MemberService
             return OperationResult<DeletedResult>.Fail(denied);
         }
 
-        located.Value.Member.WorkspaceRoles.Remove(workspaceId);
-        await _members.ReplaceAsync(located.Value.Member, cancellationToken).ConfigureAwait(false);
-        Audit(caller.Member.Id, AuditActions.WorkspaceRoleRemoved, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("memberId", located.Value.Member.Id));
+        var removed = await UpdateMemberAsync(located.Value.Member.TenantId, located.Value.Member.Id, currentMember =>
+        {
+            currentMember.WorkspaceRoles.Remove(workspaceId);
+        }, cancellationToken).ConfigureAwait(false);
+        Audit(caller.Member.Id, AuditActions.WorkspaceRoleRemoved, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("memberId", removed.Id));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
     }
 
@@ -392,17 +411,20 @@ public sealed class MemberService
     private async Task<OperationResult<RoleAssignmentResult>> AssignAsync(Caller caller, WorkspaceDocument workspace, string email, string storedRole, CancellationToken cancellationToken)
     {
         var existing = await _members.FindByEmailAsync(caller.Tenant.Id, email, cancellationToken).ConfigureAwait(false);
-        var created = existing is null;
-        var member = existing ?? CreateMember(caller.Tenant.Id, email, false);
-        member.WorkspaceRoles[workspace.Id] = storedRole;
-        if (created)
+        MemberDocument member;
+        if (existing is null)
         {
+            member = CreateMember(caller.Tenant.Id, email, false);
+            member.WorkspaceRoles[workspace.Id] = storedRole;
             await _members.CreateAsync(member, cancellationToken).ConfigureAwait(false);
             Audit(caller.Member.Id, AuditActions.MemberAdded, ("tenantId", caller.Tenant.Id), ("memberId", member.Id));
         }
         else
         {
-            await _members.ReplaceAsync(member, cancellationToken).ConfigureAwait(false);
+            member = await UpdateMemberAsync(existing.TenantId, existing.Id, current =>
+            {
+                current.WorkspaceRoles[workspace.Id] = storedRole;
+            }, cancellationToken).ConfigureAwait(false);
         }
 
         Audit(caller.Member.Id, AuditActions.WorkspaceRoleAssigned, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id), ("memberId", member.Id));
@@ -425,9 +447,11 @@ public sealed class MemberService
             return false;
         }
 
-        member.InvitationSent = true;
-        member.LastTokenSent = PlatformSupport.After(_clock.UtcNow, member.LastTokenIssued);
-        await _members.ReplaceAsync(member, cancellationToken).ConfigureAwait(false);
+        await UpdateMemberAsync(member.TenantId, member.Id, current =>
+        {
+            current.InvitationSent = true;
+            current.LastTokenSent = PlatformSupport.After(_clock.UtcNow, current.LastTokenIssued);
+        }, cancellationToken).ConfigureAwait(false);
         Audit(actorId, AuditActions.InvitationSent, ("tenantId", tenant.Id), ("memberId", member.Id));
         return true;
     }
@@ -502,6 +526,15 @@ public sealed class MemberService
         }
 
         return OperationResult<MemberDocument>.Ok(member);
+    }
+
+    private Task<MemberDocument> UpdateMemberAsync(string tenantId, string memberId, Action<MemberDocument> mutate, CancellationToken cancellationToken)
+    {
+        return DocumentUpdates.UpdateAsync(
+            ct => _members.GetAsync(tenantId, memberId, ct),
+            (current, ct) => _members.ReplaceAsync(current, ct),
+            mutate,
+            cancellationToken);
     }
 
     private async Task<OperationResult<WorkspaceMemberLocation>> LocateWorkspaceMemberAsync(Caller caller, string workspaceId, string? email, PlatformAction action, CancellationToken cancellationToken)

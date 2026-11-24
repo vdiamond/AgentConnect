@@ -29,23 +29,57 @@ public sealed class CallerMiddleware
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(resolver);
-        if (IsPlatformOperator(context.Request))
+        try
         {
+            if (IsPlatformOperator(context.Request))
+            {
+                await _next(context).ConfigureAwait(false);
+                return;
+            }
+
+            var result = await resolver.ResolveAsync(context.Request.Headers.Authorization.ToString(), context.RequestAborted).ConfigureAwait(false);
+            if (result.Error is not null)
+            {
+                await WriteAsync(context, result.Error).ConfigureAwait(false);
+                return;
+            }
+
+            context.Items[AgentConnectBuilder.CallerItemKey] = result.Value;
             await _next(context).ConfigureAwait(false);
-            return;
         }
-
-        var result = await resolver.ResolveAsync(context.Request.Headers.Authorization.ToString(), context.RequestAborted).ConfigureAwait(false);
-        if (result.Error is not null)
+        catch (StorageThrottleException exception)
         {
-            context.Response.StatusCode = result.Error.StatusCode;
-            context.Response.ContentType = "application/json";
-            await JsonSerializer.SerializeAsync(context.Response.Body, new ErrorBody(result.Error.Text), Json, context.RequestAborted).ConfigureAwait(false);
+            await WriteAsync(context, PlatformError.TooManyRequests(exception.RetryAfter)).ConfigureAwait(false);
+        }
+        catch (StorageTooLargeException)
+        {
+            await WriteAsync(context, PlatformError.ItemTooLarge).ConfigureAwait(false);
+        }
+        catch (StorageLimitException)
+        {
+            await WriteAsync(context, PlatformError.ListStorageLimit).ConfigureAwait(false);
+        }
+        catch (StorageConflictException)
+        {
+            await WriteAsync(context, PlatformError.Conflict("$: conflict")).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task WriteAsync(HttpContext context, PlatformError error)
+    {
+        if (context.Response.HasStarted)
+        {
             return;
         }
 
-        context.Items[AgentConnectBuilder.CallerItemKey] = result.Value;
-        await _next(context).ConfigureAwait(false);
+        context.Response.StatusCode = error.StatusCode;
+        context.Response.ContentType = "application/json";
+        if (error.RetryAfter is TimeSpan retry)
+        {
+            context.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retry.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        await JsonSerializer.SerializeAsync(context.Response.Body, new ErrorBody(error.Text), Json, context.RequestAborted).ConfigureAwait(false);
     }
 
     #region private

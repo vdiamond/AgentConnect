@@ -77,6 +77,13 @@ public sealed class InvalidContinuationException : Exception
 }
 
 /// <summary>
+/// A replace lost a race with another write. The caller retries against the current document.
+/// </summary>
+public sealed class StorageConflictException : Exception
+{
+}
+
+/// <summary>
 /// Reads and writes Tenant documents.
 /// </summary>
 public interface ITenantRepository

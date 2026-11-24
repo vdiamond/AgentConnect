@@ -41,6 +41,13 @@ public static class AgentConnectBuilder
         services.AddSingleton<DeletionService>();
 
         var provider = configuration[$"{AgentConnectOptions.SectionName}:DataProvider"] ?? "Cosmos";
+        var environmentName = configuration["DOTNET_ENVIRONMENT"] ?? configuration["ASPNETCORE_ENVIRONMENT"];
+        if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(environmentName, "Production", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("AgentConnect:DataProvider Memory cannot be used in Production.");
+        }
+
         if (string.Equals(provider, "Memory", StringComparison.OrdinalIgnoreCase))
         {
             services.TryAddSingleton<MemoryDatabase>();
@@ -79,6 +86,41 @@ public static class AgentConnectBuilder
 
             return new ApplicationInsightsAuditRecorder(options.ApplicationInsights.ConnectionString);
         });
+        services.AddHostedService<AuditFlushService>();
         return services;
     }
+}
+
+/// <summary>
+/// Flushes audit events when the host stops.
+/// </summary>
+public sealed class AuditFlushService : Microsoft.Extensions.Hosting.IHostedService
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AuditFlushService"/> class.
+    /// </summary>
+    /// <param name="audit">The audit recorder.</param>
+    public AuditFlushService(IAuditRecorder audit)
+    {
+        ArgumentNullException.ThrowIfNull(audit);
+        _audit = audit;
+    }
+
+    /// <inheritdoc />
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+
+    /// <inheritdoc />
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        return _audit.FlushAsync(cancellationToken);
+    }
+
+    #region private
+
+    private readonly IAuditRecorder _audit;
+
+    #endregion
 }

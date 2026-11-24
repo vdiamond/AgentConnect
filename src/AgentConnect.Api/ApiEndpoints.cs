@@ -380,7 +380,7 @@ public static class ApiEndpoints
             using var document = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted).ConfigureAwait(false);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
-                await WriteErrorAsync(http, PlatformError.BadRequest("$: expected object, found " + JsonKinds.Of(document.RootElement))).ConfigureAwait(false);
+                await WriteErrorAsync(http, PlatformError.BadRequest("$: expected Object, found " + JsonKinds.Of(document.RootElement))).ConfigureAwait(false);
                 return null;
             }
 

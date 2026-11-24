@@ -160,6 +160,16 @@ public interface IAuditRecorder
     /// </summary>
     /// <param name="entry">The entry.</param>
     void Record(AuditEntry entry);
+
+    /// <summary>
+    /// Flushes buffered entries. The default implementation does nothing.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task FlushAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
 }
 
 /// <summary>

@@ -128,9 +128,15 @@ public sealed class WorkspaceService
                 : OperationResult<DeletedResult>.Fail(PlatformError.NotFound);
         }
 
-        workspace.DeletedAt = _clock.UtcNow;
-        workspace.Updated = workspace.DeletedAt.Value;
-        await _workspaces.ReplaceAsync(workspace, cancellationToken).ConfigureAwait(false);
+        await DocumentUpdates.UpdateAsync(
+            ct => _workspaces.GetAsync(caller.Tenant.Id, workspaceId, ct),
+            (current, ct) => _workspaces.ReplaceAsync(current, ct),
+            current =>
+            {
+                current.DeletedAt = _clock.UtcNow;
+                current.Updated = current.DeletedAt.Value;
+            },
+            cancellationToken).ConfigureAwait(false);
         Record(caller.Member.Id, AuditActions.WorkspaceDeleted, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
     }
@@ -211,10 +217,16 @@ public sealed class WorkspaceService
 
         if (nextName != workspace.Name || nextDescription != workspace.Description)
         {
-            workspace.Name = nextName;
-            workspace.Description = nextDescription;
-            workspace.Updated = _clock.UtcNow;
-            await _workspaces.ReplaceAsync(workspace, cancellationToken).ConfigureAwait(false);
+            workspace = await DocumentUpdates.UpdateAsync(
+                ct => _workspaces.GetAsync(caller.Tenant.Id, workspaceId, ct),
+                (current, ct) => _workspaces.ReplaceAsync(current, ct),
+                current =>
+                {
+                    current.Name = nextName;
+                    current.Description = nextDescription;
+                    current.Updated = _clock.UtcNow;
+                },
+                cancellationToken).ConfigureAwait(false);
             Record(caller.Member.Id, AuditActions.WorkspaceUpdated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id));
         }
 

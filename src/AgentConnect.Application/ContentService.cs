@@ -137,10 +137,16 @@ public sealed class ContentService
 
         if (nextName != list.Name || nextDescription != list.Description)
         {
-            list.Name = nextName;
-            list.Description = nextDescription;
-            list.Updated = _clock.UtcNow;
-            await _lists.ReplaceAsync(list, cancellationToken).ConfigureAwait(false);
+            list = await DocumentUpdates.UpdateAsync(
+                ct => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, ct),
+                (current, ct) => _lists.ReplaceAsync(current, ct),
+                current =>
+                {
+                    current.Name = nextName;
+                    current.Description = nextDescription;
+                    current.Updated = _clock.UtcNow;
+                },
+                cancellationToken).ConfigureAwait(false);
             Record(caller.Member.Id, AuditActions.ListUpdated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("listId", list.Id));
         }
 
@@ -161,9 +167,15 @@ public sealed class ContentService
             return OperationResult<DeletedResult>.Fail(gate.Error);
         }
 
-        gate.Value!.DeletedAt = _clock.UtcNow;
-        gate.Value.Updated = gate.Value.DeletedAt.Value;
-        await _lists.ReplaceAsync(gate.Value, cancellationToken).ConfigureAwait(false);
+        await DocumentUpdates.UpdateAsync(
+            ct => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, ct),
+            (current, ct) => _lists.ReplaceAsync(current, ct),
+            current =>
+            {
+                current.DeletedAt = _clock.UtcNow;
+                current.Updated = current.DeletedAt.Value;
+            },
+            cancellationToken).ConfigureAwait(false);
         Record(caller.Member.Id, AuditActions.ListDeleted, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("listId", listId));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
     }
@@ -240,11 +252,16 @@ public sealed class ContentService
             return OperationResult<SchemaView>.Fail(PlatformError.BadRequest(schemaError));
         }
 
-        var list = gate.Value!;
-        list.Schema = schemaJson;
-        list.SchemaVersion += 1;
-        list.Updated = _clock.UtcNow;
-        await _lists.ReplaceAsync(list, cancellationToken).ConfigureAwait(false);
+        var list = await DocumentUpdates.UpdateAsync(
+            ct => _lists.GetAsync(caller.Tenant.Id, workspaceId, listId, ct),
+            (current, ct) => _lists.ReplaceAsync(current, ct),
+            current =>
+            {
+                current.Schema = schemaJson;
+                current.SchemaVersion += 1;
+                current.Updated = _clock.UtcNow;
+            },
+            cancellationToken).ConfigureAwait(false);
         Record(caller.Member.Id, AuditActions.SchemaUpdated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("listId", listId));
         using var document = JsonDocument.Parse(schemaJson);
         return OperationResult<SchemaView>.Ok(new SchemaView(document.RootElement.Clone(), list.SchemaVersion));
@@ -417,7 +434,7 @@ public sealed class ContentService
             TenantId = caller.Tenant.Id,
             WorkspaceId = workspaceId,
             ListId = listId,
-            Data = normalized,
+            Data = ItemDocument.ParseData(normalized),
             SchemaVersion = version,
             Created = existing?.Created ?? now,
             Updated = now,
@@ -555,10 +572,9 @@ public sealed class ContentService
         return new ListView(list.Id, list.Name, list.SchemaVersion, list.Description);
     }
 
-    private static JsonElement ParseElement(string json)
+    private static JsonElement ParseElement(JsonElement data)
     {
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.Clone();
+        return data.ValueKind == JsonValueKind.Undefined ? data : data.Clone();
     }
 
     #endregion

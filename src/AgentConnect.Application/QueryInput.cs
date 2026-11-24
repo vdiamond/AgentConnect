@@ -51,7 +51,7 @@ public static class QueryInput
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object)
             {
-                error = "query: expected object, found " + JsonKinds.Of(root);
+                error = "query: expected Object, found " + JsonKinds.Of(root);
                 return false;
             }
 

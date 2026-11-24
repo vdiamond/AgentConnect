@@ -30,7 +30,6 @@ public sealed class SpecTests
 
     [Fact]
     [Trait("T", "T-2")]
-    [Trait("T", "T-46")]
     public async Task AddMember_IsCaseInsensitiveAndIsolated()
     {
         var first = await _session.CreateTenantAsync("One");

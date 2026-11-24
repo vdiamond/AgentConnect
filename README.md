@@ -25,7 +25,7 @@ dotnet build AgentConnect.slnx
 dotnet test AgentConnect.slnx
 ```
 
-Tests do not call Azure. They use the in-memory store and a fake email sender. One test is skipped unless a Cosmos DB emulator is configured; this environment does not run the emulator.
+Tests do not call Azure. They use the in-memory store and a fake email sender. The `cosmos-emulator` tests run against the Cosmos DB emulator when both `AGENTCONNECT_COSMOS_ENDPOINT` and `AGENTCONNECT_COSMOS_KEY` are set, and skip cleanly otherwise. Those tests create the section 5 containers on that account. This environment has no emulator, so they skip.
 
 ## Configuration
 
@@ -37,11 +37,13 @@ Secrets are environment variables or Container Apps secrets. Do not put them in 
 | `AgentConnect__TokenEncryptionKey` | Base64 32-byte key for stored tokens |
 | `AgentConnect__McpServerUrl` | MCP URL included in emails |
 | `AgentConnect__RestApiUrl` | REST URL included in emails |
-| `AgentConnect__DataProvider` | `Cosmos` or `Memory` |
+| `AgentConnect__DataProvider` | `Cosmos` or `Memory`. `Memory` is refused when the environment is Production |
 | `AgentConnect__Cosmos__Endpoint` | Cosmos account endpoint (managed identity) |
+| `AGENTCONNECT_COSMOS_ENDPOINT` | Emulator endpoint for the Cosmos integration tests |
+| `AGENTCONNECT_COSMOS_KEY` | Emulator key. When set, the client uses this key instead of managed identity |
 | `AgentConnect__Cosmos__Database` | Database name |
 | `AgentConnect__Email__Endpoint` | Azure Communication Services endpoint |
 | `AgentConnect__Email__SenderAddress` | Sender on `azure4smb.com` |
 | `AgentConnect__ApplicationInsights__ConnectionString` | Audit and telemetry |
 
-Cosmos access uses `DefaultAzureCredential`. Account keys are not used. The Items container needs the composite index in `CosmosModel` (`updated` ascending, then `id` ascending). The application does not create Azure resources.
+Cosmos and email access use `ManagedIdentityCredential` for the system-assigned identity. The emulator key is read only from `AGENTCONNECT_COSMOS_KEY` and is never committed. Queries that order by two properties need composite indexes (`created`+`id` and `email`+`id` on Members; `updated`+`id` on Workspaces, Lists, and Items). The emulator tests create those containers and indexes. The application does not create Azure resources.

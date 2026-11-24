@@ -21,7 +21,7 @@ public sealed class AcsEmailSender : IEmailSender
         }
 
         _sender = options.Email.SenderAddress;
-        _client = new EmailClient(new Uri(options.Email.Endpoint), new DefaultAzureCredential());
+        _client = new EmailClient(new Uri(options.Email.Endpoint), new ManagedIdentityCredential(ManagedIdentityId.SystemAssigned));
     }
 
     /// <inheritdoc />

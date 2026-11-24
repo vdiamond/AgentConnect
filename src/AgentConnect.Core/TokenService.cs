@@ -39,6 +39,7 @@ public sealed class TokenService
         }
 
         _key = key;
+        ContinuationTokens.Configure(encryptionKeyBase64);
     }
 
     /// <summary>
