@@ -423,6 +423,36 @@ public sealed class MoreSpecTests
         });
         Assert.True(slash.IsError);
         Assert.Equal("itemId: invalid", slash.Text);
+        foreach (var (routeId, itemId) in new (string Route, string Id)[] { ("a%2520b", "a%20b"), ("%25", "%"), ("trail%25", "trail%") })
+        {
+            var path = "/workspaces/" + workspace + "/lists/" + list + "/items/" + routeId;
+            var put = await _session.SendAsync(HttpMethod.Put, path, new { title = "x" }, owner.Token);
+            Assert.Equal(400, put.Status);
+            Assert.Equal("itemId: invalid", Error(put.Body));
+            var get = await _session.SendAsync(HttpMethod.Get, path, null, owner.Token);
+            Assert.Equal(400, get.Status);
+            Assert.Equal("itemId: invalid", Error(get.Body));
+            var deleted = await _session.SendAsync(HttpMethod.Delete, path, null, owner.Token);
+            Assert.Equal(400, deleted.Status);
+            Assert.Equal("itemId: invalid", Error(deleted.Body));
+            foreach (var tool in new[] { "upsert_item", "get_item", "delete_item" })
+            {
+                var arguments = new Dictionary<string, object?>
+                {
+                    ["workspaceId"] = workspace,
+                    ["listId"] = list,
+                    ["itemId"] = itemId,
+                };
+                if (tool == "upsert_item")
+                {
+                    arguments["data"] = Session.Node("""{"title":"x"}""");
+                }
+
+                var result = await _session.ToolAsync(owner.Token, tool, arguments);
+                Assert.True(result.IsError);
+                Assert.Equal("itemId: invalid", result.Text);
+            }
+        }
     }
 
     [Fact]

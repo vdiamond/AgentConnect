@@ -82,6 +82,22 @@ public static class PlatformSupport
     }
 
     /// <summary>
+    /// Logs a non-throttling Cosmos fault. The message has the status, substatus, and activity id only.
+    /// </summary>
+    /// <param name="logger">The logger.</param>
+    /// <param name="exception">The fault.</param>
+    public static void LogCosmosFault(ILogger logger, StorageFailureException exception)
+    {
+        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(exception);
+        logger.LogError(
+            "Cosmos request failed with status {StatusCode}, substatus {SubStatusCode}, activity {ActivityId}.",
+            exception.StatusCode,
+            exception.SubStatusCode,
+            exception.ActivityId);
+    }
+
+    /// <summary>
     /// Creates a new id.
     /// </summary>
     /// <returns>A GUID.</returns>

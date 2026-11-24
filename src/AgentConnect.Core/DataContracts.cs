@@ -91,6 +91,36 @@ public sealed class DuplicateValueException : Exception
 }
 
 /// <summary>
+/// Cosmos DB failed for a reason that is not throttling, a size limit, or a conflict.
+/// The message is a fixed text and does not include the Cosmos error.
+/// </summary>
+public sealed class StorageFailureException : Exception
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="StorageFailureException"/> class.
+    /// </summary>
+    /// <param name="statusCode">The Cosmos HTTP status code.</param>
+    /// <param name="subStatusCode">The Cosmos substatus code.</param>
+    /// <param name="activityId">The Cosmos activity id.</param>
+    public StorageFailureException(int statusCode, int subStatusCode, string? activityId)
+        : base("$: internal error")
+    {
+        StatusCode = statusCode;
+        SubStatusCode = subStatusCode;
+        ActivityId = activityId ?? "";
+    }
+
+    /// <summary>Gets the Cosmos HTTP status code.</summary>
+    public int StatusCode { get; }
+
+    /// <summary>Gets the Cosmos substatus code.</summary>
+    public int SubStatusCode { get; }
+
+    /// <summary>Gets the Cosmos activity id.</summary>
+    public string ActivityId { get; }
+}
+
+/// <summary>
 /// Reads and writes Tenant documents.
 /// </summary>
 public interface ITenantRepository

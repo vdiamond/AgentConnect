@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -19,16 +20,19 @@ public sealed class AgentConnectTools
     /// <param name="workspaces">The workspaces.</param>
     /// <param name="members">The members.</param>
     /// <param name="content">The lists and items.</param>
-    public AgentConnectTools(IHttpContextAccessor http, WorkspaceService workspaces, MemberService members, ContentService content)
+    /// <param name="logger">The logger.</param>
+    public AgentConnectTools(IHttpContextAccessor http, WorkspaceService workspaces, MemberService members, ContentService content, ILogger<AgentConnectTools> logger)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(workspaces);
         ArgumentNullException.ThrowIfNull(members);
         ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(logger);
         _http = http;
         _workspaces = workspaces;
         _members = members;
         _content = content;
+        _logger = logger;
     }
 
     /// <summary>Lists the workspaces the caller can see.</summary>
@@ -408,6 +412,7 @@ public sealed class AgentConnectTools
     private readonly WorkspaceService _workspaces;
     private readonly MemberService _members;
     private readonly ContentService _content;
+    private readonly ILogger _logger;
 
     private static JsonElement Read(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound)
     {
@@ -485,7 +490,7 @@ public sealed class AgentConnectTools
         return unknown;
     }
 
-    private static async Task<OperationResult<T>> Guarded<T>(Func<Task<OperationResult<T>>> call)
+    private async Task<OperationResult<T>> Guarded<T>(Func<Task<OperationResult<T>>> call)
     {
         try
         {
@@ -506,6 +511,11 @@ public sealed class AgentConnectTools
         catch (StorageConflictException)
         {
             return OperationResult<T>.Fail(PlatformError.Conflict("$: conflict"));
+        }
+        catch (StorageFailureException exception)
+        {
+            PlatformSupport.LogCosmosFault(_logger, exception);
+            return OperationResult<T>.Fail(PlatformError.InternalError);
         }
     }
 

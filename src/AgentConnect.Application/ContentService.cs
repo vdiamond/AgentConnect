@@ -633,9 +633,17 @@ public sealed class DeletionService
     public async Task RunUntilQuietAsync(CancellationToken cancellationToken)
     {
         var batch = _options.DeletionBatchSize < 1 ? 100 : _options.DeletionBatchSize;
-        while (await _store.DeleteNextBatchAsync(batch, cancellationToken).ConfigureAwait(false) > 0)
+        try
         {
-            _logger.LogInformation("Deletion batch completed.");
+            while (await _store.DeleteNextBatchAsync(batch, cancellationToken).ConfigureAwait(false) > 0)
+            {
+                _logger.LogInformation("Deletion batch completed.");
+            }
+        }
+        catch (StorageFailureException exception)
+        {
+            PlatformSupport.LogCosmosFault(_logger, exception);
+            throw;
         }
     }
 

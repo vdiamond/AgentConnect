@@ -42,7 +42,7 @@ public static class CosmosErrors
             return new StorageLimitException();
         }
 
-        return Throttle(exception);
+        return new StorageFailureException((int)exception.StatusCode, exception.SubStatusCode, exception.ActivityId);
     }
 
     #region private

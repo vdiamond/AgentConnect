@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using AgentConnect.Tests.Support;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AgentConnect.Tests.Unit;
@@ -67,10 +68,11 @@ public sealed class CoreTests
         Assert.False(ItemIdRules.IsValid("a%5Cb"));
         Assert.False(ItemIdRules.IsValid("a%3Fb"));
         Assert.False(ItemIdRules.IsValid("a%23b"));
+        Assert.False(ItemIdRules.IsValid("a%20b"));
+        Assert.False(ItemIdRules.IsValid("a%2Fb"));
+        Assert.False(ItemIdRules.IsValid("%"));
+        Assert.False(ItemIdRules.IsValid("trail%"));
         Assert.True(ItemIdRules.IsValid("task-1"));
-        Assert.True(ItemIdRules.IsValid("a%b"));
-        Assert.True(ItemIdRules.IsValid("a%25b"));
-        Assert.True(ItemIdRules.IsValid("50%"));
         Assert.True(ItemIdRules.IsValid("a+b"));
     }
 
@@ -199,9 +201,16 @@ public sealed class CoreTests
         Assert.IsType<StorageLimitException>(CosmosErrors.MapWrite(new CosmosException("full", HttpStatusCode.Forbidden, CosmosErrors.PartitionKeyQuotaOverLimit, "act", 1)));
         Assert.IsType<StorageThrottleException>(CosmosErrors.MapWrite(new CosmosException("timeout", HttpStatusCode.RequestTimeout, 0, "act", 1)));
         Assert.IsType<StorageThrottleException>(CosmosErrors.MapWrite(new CosmosException("unavailable", HttpStatusCode.ServiceUnavailable, 0, "act", 1)));
-        var unexpected = CosmosErrors.MapWrite(new CosmosException("signing", HttpStatusCode.Unauthorized, 0, "act", 1));
-        var throttle = Assert.IsType<StorageThrottleException>(unexpected);
-        Assert.DoesNotContain("signing", throttle.Message, StringComparison.Ordinal);
+        var unexpected = Assert.IsType<StorageFailureException>(CosmosErrors.MapWrite(new CosmosException("signing secret", HttpStatusCode.Unauthorized, 42, "activity-9", 1)));
+        Assert.Equal("$: internal error", unexpected.Message);
+        Assert.Equal(401, unexpected.StatusCode);
+        Assert.Equal(42, unexpected.SubStatusCode);
+        Assert.Equal("activity-9", unexpected.ActivityId);
+        Assert.DoesNotContain("signing", unexpected.Message, StringComparison.Ordinal);
+        var logger = new ListLogger();
+        PlatformSupport.LogCosmosFault(logger, unexpected);
+        Assert.Contains(logger.Lines, line => line.Contains("status 401", StringComparison.Ordinal) && line.Contains("substatus 42", StringComparison.Ordinal) && line.Contains("activity activity-9", StringComparison.Ordinal));
+        Assert.DoesNotContain(logger.Lines, line => line.Contains("signing", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -374,6 +383,36 @@ public sealed class CoreTests
     {
         var remainder = text.Length % 4;
         return remainder == 0 ? text : text + new string('=', 4 - remainder);
+    }
+
+    private sealed class ListLogger : ILogger
+    {
+        public List<string> Lines { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state)
+            where TState : notnull
+        {
+            return NullScope.Instance;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Lines.Add(formatter(state, exception));
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
+            }
+        }
     }
 
     private sealed class InterruptingEmail : IEmailSender

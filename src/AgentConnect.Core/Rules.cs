@@ -164,7 +164,7 @@ public static class ItemIdRules
     {
         foreach (var character in itemId)
         {
-            if (character is '/' or '\\' or '?' or '#')
+            if (character is '/' or '\\' or '?' or '#' or '%')
             {
                 return true;
             }

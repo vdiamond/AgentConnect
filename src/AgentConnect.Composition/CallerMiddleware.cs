@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
 
 namespace AgentConnect;
 
@@ -13,10 +14,13 @@ public sealed class CallerMiddleware
     /// Initializes a new instance of the <see cref="CallerMiddleware"/> class.
     /// </summary>
     /// <param name="next">The next delegate.</param>
-    public CallerMiddleware(RequestDelegate next)
+    /// <param name="logger">The logger.</param>
+    public CallerMiddleware(RequestDelegate next, ILogger<CallerMiddleware> logger)
     {
         ArgumentNullException.ThrowIfNull(next);
+        ArgumentNullException.ThrowIfNull(logger);
         _next = next;
+        _logger = logger;
     }
 
     /// <summary>
@@ -63,6 +67,11 @@ public sealed class CallerMiddleware
         {
             await WriteAsync(context, PlatformError.Conflict("$: conflict")).ConfigureAwait(false);
         }
+        catch (StorageFailureException exception)
+        {
+            PlatformSupport.LogCosmosFault(_logger, exception);
+            await WriteAsync(context, PlatformError.InternalError).ConfigureAwait(false);
+        }
     }
 
     private static async Task WriteAsync(HttpContext context, PlatformError error)
@@ -90,6 +99,7 @@ public sealed class CallerMiddleware
     };
 
     private readonly RequestDelegate _next;
+    private readonly ILogger _logger;
 
     private static bool IsPlatformOperator(HttpRequest request)
     {

@@ -29,6 +29,9 @@ public sealed record PlatformError(int StatusCode, string Text, TimeSpan? RetryA
     /// <summary>Gets the 507 <c>$: list storage limit reached</c> error.</summary>
     public static PlatformError ListStorageLimit { get; } = new(507, "$: list storage limit reached");
 
+    /// <summary>Gets the 500 <c>$: internal error</c> error. The text has no exception detail.</summary>
+    public static PlatformError InternalError { get; } = new(500, "$: internal error");
+
     /// <summary>
     /// Creates a 429 <c>$: too many requests</c> error.
     /// </summary>
