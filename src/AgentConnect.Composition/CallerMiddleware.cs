@@ -55,6 +55,14 @@ public sealed class CallerMiddleware
         {
             await WriteAsync(context, PlatformError.TooManyRequests(exception.RetryAfter)).ConfigureAwait(false);
         }
+        catch (StorageUnavailableException exception)
+        {
+            await WriteAsync(context, PlatformError.ServiceUnavailable(exception.RetryAfter)).ConfigureAwait(false);
+        }
+        catch (DocumentMissingException)
+        {
+            await WriteAsync(context, PlatformError.NotFound).ConfigureAwait(false);
+        }
         catch (StorageTooLargeException)
         {
             await WriteAsync(context, PlatformError.ItemTooLarge).ConfigureAwait(false);

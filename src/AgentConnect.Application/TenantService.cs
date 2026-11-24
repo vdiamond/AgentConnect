@@ -157,6 +157,7 @@ public sealed class TenantService
             {
                 current.DeletedAt = _clock.UtcNow;
             },
+            _options.ConcurrencyRetries,
             cancellationToken).ConfigureAwait(false);
         Audit(PlatformSupport.PlatformOperator, AuditActions.TenantDeleted, ("tenantId", tenant.Id));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
@@ -215,6 +216,7 @@ public sealed class TenantService
                     current.PageSizeDefault = nextDefault;
                     current.PageSizeMax = nextMax;
                 },
+                _options.ConcurrencyRetries,
                 cancellationToken).ConfigureAwait(false);
             caller.Tenant.PageSizeDefault = nextDefault;
             caller.Tenant.PageSizeMax = nextMax;
@@ -281,6 +283,7 @@ public sealed class TenantService
                 current.InvitationSent = true;
                 current.LastTokenSent = PlatformSupport.After(_clock.UtcNow, current.LastTokenIssued);
             },
+            _options.ConcurrencyRetries,
             cancellationToken).ConfigureAwait(false);
         Audit(invitedBy == "AgentConnect" ? PlatformSupport.PlatformOperator : invitedBy, AuditActions.InvitationSent, ("tenantId", tenant.Id), ("memberId", member.Id));
         return true;
@@ -317,6 +320,7 @@ public sealed class TenantService
                         current.Status = status;
                     }
                 },
+                _options.ConcurrencyRetries,
                 cancellationToken).ConfigureAwait(false);
             Audit(PlatformSupport.PlatformOperator, action, ("tenantId", tenant.Value.Id));
         }

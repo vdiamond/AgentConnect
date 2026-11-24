@@ -40,6 +40,7 @@ public sealed class McpSmokeTests
                 "list_workspaces",
                 "query_items",
                 "revoke_workspace_access",
+                "set_tenant_owner",
                 "update_list",
                 "update_schema",
                 "update_workspace",

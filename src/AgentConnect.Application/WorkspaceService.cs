@@ -14,16 +14,19 @@ public sealed class WorkspaceService
     /// <param name="members">The membership service.</param>
     /// <param name="audit">The audit recorder.</param>
     /// <param name="clock">The clock.</param>
-    public WorkspaceService(IWorkspaceRepository workspaces, MemberService members, IAuditRecorder audit, IClock clock)
+    /// <param name="options">The platform options.</param>
+    public WorkspaceService(IWorkspaceRepository workspaces, MemberService members, IAuditRecorder audit, IClock clock, AgentConnectOptions options)
     {
         ArgumentNullException.ThrowIfNull(workspaces);
         ArgumentNullException.ThrowIfNull(members);
         ArgumentNullException.ThrowIfNull(audit);
         ArgumentNullException.ThrowIfNull(clock);
+        ArgumentNullException.ThrowIfNull(options);
         _workspaces = workspaces;
         _members = members;
         _audit = audit;
         _clock = clock;
+        _options = options;
     }
 
     /// <summary>Creates a workspace and optional initial roles. FR-15.</summary>
@@ -140,6 +143,7 @@ public sealed class WorkspaceService
                 current.DeletedAt = _clock.UtcNow;
                 current.Updated = current.DeletedAt.Value;
             },
+            _options.ConcurrencyRetries,
             cancellationToken).ConfigureAwait(false);
         Record(caller.Member.Id, AuditActions.WorkspaceDeleted, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
@@ -232,6 +236,7 @@ public sealed class WorkspaceService
                         current.Description = nextDescription;
                         current.Updated = _clock.UtcNow;
                     },
+                    _options.ConcurrencyRetries,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (DuplicateValueException)
@@ -267,6 +272,7 @@ public sealed class WorkspaceService
     private readonly MemberService _members;
     private readonly IAuditRecorder _audit;
     private readonly IClock _clock;
+    private readonly AgentConnectOptions _options;
 
     private void Record(string actor, string action, params (string Key, string Value)[] targets)
     {

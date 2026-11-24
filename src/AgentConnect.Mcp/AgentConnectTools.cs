@@ -54,6 +54,11 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
+        if (Extra(request, "pageSize", "continuation") is { } extra)
+        {
+            return extra;
+        }
+
         var (size, specified, token) = Page(request, pageSize, continuation);
         return ToResult(await Guarded(() => _workspaces.ListAsync(caller, size, specified, token, cancellationToken)).ConfigureAwait(false));
     }
@@ -62,10 +67,16 @@ public sealed class AgentConnectTools
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="name">The name.</param>
     /// <param name="description">The description.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The workspace.</returns>
     [McpServerTool(Name = "update_workspace"), Description("Updates a workspace's name and description.")]
-    public async Task<CallToolResult> UpdateWorkspace(string workspaceId, string? name = null, string? description = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> UpdateWorkspace(
+        string workspaceId,
+        JsonElement? name = null,
+        JsonElement? description = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -73,7 +84,24 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _workspaces.UpdateAsync(caller, workspaceId, new OptionalText(name is not null, name), new OptionalText(description is not null, description), cancellationToken)).ConfigureAwait(false));
+        if (Extra(request, "workspaceId", "name", "description") is { } extra)
+        {
+            return extra;
+        }
+
+        var nameError = ReadPatch(request, "name", name, false, out var nextName);
+        if (nameError is not null)
+        {
+            return Error(nameError);
+        }
+
+        var descriptionError = ReadPatch(request, "description", description, true, out var nextDescription);
+        if (descriptionError is not null)
+        {
+            return Error(descriptionError);
+        }
+
+        return ToResult(await Guarded(() => _workspaces.UpdateAsync(caller, workspaceId, nextName, nextDescription, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Lists the lists in a workspace.</summary>
@@ -95,6 +123,11 @@ public sealed class AgentConnectTools
         if (caller is null)
         {
             return Error(PlatformError.InvalidToken);
+        }
+
+        if (Extra(request, "workspaceId", "pageSize", "continuation") is { } extra)
+        {
+            return extra;
         }
 
         var (size, specified, token) = Page(request, pageSize, continuation);
@@ -124,6 +157,11 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
+        if (Extra(request, "workspaceId", "name", "schema", "description") is { } extra)
+        {
+            return extra;
+        }
+
         return ToResult(await Guarded(() => _content.CreateListAsync(caller, workspaceId, name, description, description is not null, JsonText(request, "schema", schema), cancellationToken)).ConfigureAwait(false));
     }
 
@@ -132,10 +170,17 @@ public sealed class AgentConnectTools
     /// <param name="listId">The list id.</param>
     /// <param name="name">The name.</param>
     /// <param name="description">The description.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The list.</returns>
     [McpServerTool(Name = "update_list"), Description("Updates a list's name or description.")]
-    public async Task<CallToolResult> UpdateList(string workspaceId, string listId, string? name = null, string? description = null, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> UpdateList(
+        string workspaceId,
+        string listId,
+        JsonElement? name = null,
+        JsonElement? description = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -143,21 +188,44 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _content.UpdateListAsync(caller, workspaceId, listId, new OptionalText(name is not null, name), new OptionalText(description is not null, description), cancellationToken)).ConfigureAwait(false));
+        if (Extra(request, "workspaceId", "listId", "name", "description") is { } extra)
+        {
+            return extra;
+        }
+
+        var nameError = ReadPatch(request, "name", name, false, out var nextName);
+        if (nameError is not null)
+        {
+            return Error(nameError);
+        }
+
+        var descriptionError = ReadPatch(request, "description", description, true, out var nextDescription);
+        if (descriptionError is not null)
+        {
+            return Error(descriptionError);
+        }
+
+        return ToResult(await Guarded(() => _content.UpdateListAsync(caller, workspaceId, listId, nextName, nextDescription, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Deletes a list.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="listId">The list id.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The confirmation.</returns>
     [McpServerTool(Name = "delete_list"), Description("Deletes a list. Its items are removed in the background.")]
-    public async Task<CallToolResult> DeleteList(string workspaceId, string listId, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> DeleteList(string workspaceId, string listId, RequestContext<CallToolRequestParams>? request = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
         {
             return Error(PlatformError.InvalidToken);
+        }
+
+        if (Extra(request, "workspaceId", "listId") is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _content.DeleteListAsync(caller, workspaceId, listId, cancellationToken)).ConfigureAwait(false));
@@ -166,15 +234,21 @@ public sealed class AgentConnectTools
     /// <summary>Reads a list schema.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="listId">The list id.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The schema.</returns>
     [McpServerTool(Name = "get_schema"), Description("Reads a list's current schema and schema version.")]
-    public async Task<CallToolResult> GetSchema(string workspaceId, string listId, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> GetSchema(string workspaceId, string listId, RequestContext<CallToolRequestParams>? request = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
         {
             return Error(PlatformError.InvalidToken);
+        }
+
+        if (Extra(request, "workspaceId", "listId") is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _content.GetSchemaAsync(caller, workspaceId, listId, cancellationToken)).ConfigureAwait(false));
@@ -199,6 +273,11 @@ public sealed class AgentConnectTools
         if (caller is null)
         {
             return Error(PlatformError.InvalidToken);
+        }
+
+        if (Extra(request, "workspaceId", "listId", "schema") is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _content.UpdateSchemaAsync(caller, workspaceId, listId, JsonText(request, "schema", schema), cancellationToken)).ConfigureAwait(false));
@@ -235,17 +314,21 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        var unknown = UnknownArguments(request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation");
+        if (Extra(request, "workspaceId", "listId", "shape", "schemaVersion", "where", "orderBy", "pageSize", "continuation") is { } extra)
+        {
+            return extra;
+        }
+
         var (size, specified, token) = Page(request, pageSize, continuation);
         var result = await Guarded(() => _content.QueryItemsAsync(
             caller,
             workspaceId,
             listId,
             TextArgument(request, "shape", shape),
-            Read(request, "schemaVersion", schemaVersion),
-            Read(request, "where", where),
-            Read(request, "orderBy", orderBy),
-            unknown,
+            Given(request, "schemaVersion", schemaVersion),
+            Given(request, "where", where),
+            Given(request, "orderBy", orderBy),
+            [],
             size,
             specified,
             token,
@@ -257,15 +340,21 @@ public sealed class AgentConnectTools
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="listId">The list id.</param>
     /// <param name="itemId">The item id.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The item.</returns>
     [McpServerTool(Name = "get_item"), Description("Reads one item. Reads do not re-validate.")]
-    public async Task<CallToolResult> GetItem(string workspaceId, string listId, string itemId, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> GetItem(string workspaceId, string listId, string itemId, RequestContext<CallToolRequestParams>? request = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
         {
             return Error(PlatformError.InvalidToken);
+        }
+
+        if (Extra(request, "workspaceId", "listId", "itemId") is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _content.GetItemAsync(caller, workspaceId, listId, itemId, cancellationToken)).ConfigureAwait(false));
@@ -294,10 +383,9 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        var unknown = UnknownArguments(request, "workspaceId", "listId", "data", "itemId");
-        if (unknown.Count > 0)
+        if (Extra(request, "workspaceId", "listId", "data", "itemId") is { } extra)
         {
-            return Error(PlatformError.BadRequest(unknown[0] + ": unknown field"));
+            return extra;
         }
 
         var json = data is { } value && value.ValueKind != JsonValueKind.Undefined ? value.GetRawText() : null;
@@ -308,15 +396,21 @@ public sealed class AgentConnectTools
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="listId">The list id.</param>
     /// <param name="itemId">The item id.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The confirmation.</returns>
     [McpServerTool(Name = "delete_item"), Description("Deletes an item.")]
-    public async Task<CallToolResult> DeleteItem(string workspaceId, string listId, string itemId, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> DeleteItem(string workspaceId, string listId, string itemId, RequestContext<CallToolRequestParams>? request = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
         {
             return Error(PlatformError.InvalidToken);
+        }
+
+        if (Extra(request, "workspaceId", "listId", "itemId") is { } extra)
+        {
+            return extra;
         }
 
         return ToResult(await Guarded(() => _content.DeleteItemAsync(caller, workspaceId, listId, itemId, cancellationToken)).ConfigureAwait(false));
@@ -326,10 +420,16 @@ public sealed class AgentConnectTools
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="email">The email.</param>
     /// <param name="role">WorkspaceOwner, WorkspaceWrite, or WorkspaceRead.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The assignment, including emailSent.</returns>
     [McpServerTool(Name = "invite_member"), Description("Adds an email to a workspace and sends the matching email.")]
-    public async Task<CallToolResult> InviteMember(string workspaceId, string email, string role, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> InviteMember(
+        string workspaceId,
+        JsonElement? email = null,
+        JsonElement? role = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -337,17 +437,38 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _members.AddToWorkspaceAsync(caller, workspaceId, email, role, cancellationToken)).ConfigureAwait(false));
+        if (Extra(request, "workspaceId", "email", "role") is { } extra)
+        {
+            return extra;
+        }
+
+        if (ReadMemberField(request, "email", email, "email: required", "email: invalid format") is not string emailText)
+        {
+            return Error(PlatformError.BadRequest(MemberFieldError(request, "email", email, "email: required", "email: invalid format")!));
+        }
+
+        if (ReadMemberField(request, "role", role, "role: required", "role: invalid") is not string roleText)
+        {
+            return Error(PlatformError.BadRequest(MemberFieldError(request, "role", role, "role: required", "role: invalid")!));
+        }
+
+        return ToResult(await Guarded(() => _members.AddToWorkspaceAsync(caller, workspaceId, emailText, roleText, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Changes a workspace role.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="email">The email.</param>
     /// <param name="role">WorkspaceOwner, WorkspaceWrite, or WorkspaceRead.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The role.</returns>
     [McpServerTool(Name = "change_workspace_role"), Description("Changes a member's role in a workspace.")]
-    public async Task<CallToolResult> ChangeWorkspaceRole(string workspaceId, string email, string role, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> ChangeWorkspaceRole(
+        string workspaceId,
+        JsonElement? email = null,
+        JsonElement? role = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -355,16 +476,36 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _members.ChangeRoleAsync(caller, workspaceId, email, role, cancellationToken)).ConfigureAwait(false));
+        if (Extra(request, "workspaceId", "email", "role") is { } extra)
+        {
+            return extra;
+        }
+
+        if (ReadMemberField(request, "email", email, "email: required", "email: invalid format") is not string emailText)
+        {
+            return Error(PlatformError.BadRequest(MemberFieldError(request, "email", email, "email: required", "email: invalid format")!));
+        }
+
+        if (ReadMemberField(request, "role", role, "role: required", "role: invalid") is not string roleText)
+        {
+            return Error(PlatformError.BadRequest(MemberFieldError(request, "role", role, "role: required", "role: invalid")!));
+        }
+
+        return ToResult(await Guarded(() => _members.ChangeRoleAsync(caller, workspaceId, emailText, roleText, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Removes a workspace role.</summary>
     /// <param name="workspaceId">The workspace id.</param>
     /// <param name="email">The email.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The confirmation.</returns>
     [McpServerTool(Name = "revoke_workspace_access"), Description("Removes a member's role in a workspace. The member stays in the tenant.")]
-    public async Task<CallToolResult> RevokeWorkspaceAccess(string workspaceId, string email, CancellationToken cancellationToken = default)
+    public async Task<CallToolResult> RevokeWorkspaceAccess(
+        string workspaceId,
+        JsonElement? email = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
     {
         var caller = Caller();
         if (caller is null)
@@ -372,7 +513,17 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        return ToResult(await Guarded(() => _members.RemoveFromWorkspaceAsync(caller, workspaceId, email, cancellationToken)).ConfigureAwait(false));
+        if (Extra(request, "workspaceId", "email") is { } extra)
+        {
+            return extra;
+        }
+
+        if (ReadMemberField(request, "email", email, "email: required", "email: invalid format") is not string emailText)
+        {
+            return Error(PlatformError.BadRequest(MemberFieldError(request, "email", email, "email: required", "email: invalid format")!));
+        }
+
+        return ToResult(await Guarded(() => _members.RemoveFromWorkspaceAsync(caller, workspaceId, emailText, cancellationToken)).ConfigureAwait(false));
     }
 
     /// <summary>Lists workspace members.</summary>
@@ -396,8 +547,61 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
+        if (Extra(request, "workspaceId", "pageSize", "continuation") is { } extra)
+        {
+            return extra;
+        }
+
         var (size, specified, token) = Page(request, pageSize, continuation);
         return ToResult(await Guarded(() => _members.ListWorkspaceMembersAsync(caller, workspaceId, size, specified, token, cancellationToken)).ConfigureAwait(false));
+    }
+
+    /// <summary>Sets or clears the TenantOwner flag. FR-9.</summary>
+    /// <param name="email">The member email, as raw JSON.</param>
+    /// <param name="isTenantOwner">The flag, as raw JSON.</param>
+    /// <param name="request">The raw call, used to reject unknown arguments.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The member.</returns>
+    [McpServerTool(Name = "set_tenant_owner"), Description("Gives or removes the TenantOwner flag. A TenantOwner cannot change their own flag.")]
+    public async Task<CallToolResult> SetTenantOwner(
+        JsonElement? email = null,
+        JsonElement? isTenantOwner = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
+    {
+        var caller = Caller();
+        if (caller is null)
+        {
+            return Error(PlatformError.InvalidToken);
+        }
+
+        if (!caller.IsTenantOwner)
+        {
+            return Error(PlatformError.NotAllowed);
+        }
+
+        if (Extra(request, "email", "isTenantOwner") is { } extra)
+        {
+            return extra;
+        }
+
+        var flag = Read(request, "isTenantOwner", isTenantOwner);
+        if (flag.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return Error(PlatformError.BadRequest("isTenantOwner: required"));
+        }
+
+        if (flag.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            return Error(PlatformError.BadRequest("isTenantOwner: expected Boolean, found " + JsonKinds.Of(flag)));
+        }
+
+        if (ReadMemberField(request, "email", email, "email: required", "email: invalid format") is not string emailText)
+        {
+            return Error(PlatformError.BadRequest(MemberFieldError(request, "email", email, "email: required", "email: invalid format")!));
+        }
+
+        return ToResult(await Guarded(() => _members.SetTenantOwnerAsync(caller, emailText, flag.GetBoolean(), cancellationToken)).ConfigureAwait(false));
     }
 
     #region private
@@ -435,16 +639,22 @@ public sealed class AgentConnectTools
         var element = Read(request, name, bound);
         return element.ValueKind switch
         {
-            JsonValueKind.Undefined => null,
+            JsonValueKind.Undefined or JsonValueKind.Null => null,
             JsonValueKind.String => element.GetString(),
             _ => element.GetRawText(),
         };
     }
 
+    private static JsonElement Given(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound)
+    {
+        var element = Read(request, name, bound);
+        return element.ValueKind == JsonValueKind.Null ? default : element;
+    }
+
     private static (int? Size, bool Specified, string? Continuation) Page(RequestContext<CallToolRequestParams>? request, JsonElement? pageSize, JsonElement? continuation)
     {
         var sizeElement = Read(request, "pageSize", pageSize);
-        var specified = sizeElement.ValueKind != JsonValueKind.Undefined;
+        var specified = sizeElement.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null);
         int? size = null;
         if (specified && IsWhole(sizeElement, out var number))
         {
@@ -469,6 +679,55 @@ public sealed class AgentConnectTools
         }
 
         return element.TryGetInt32(out number) && number >= 1;
+    }
+
+    private static CallToolResult? Extra(RequestContext<CallToolRequestParams>? request, params string[] known)
+    {
+        var unknown = UnknownArguments(request, known);
+        return unknown.Count == 0 ? null : Error(PlatformError.BadRequest(unknown[0] + ": unknown field"));
+    }
+
+    private static PlatformError? ReadPatch(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound, bool clearOnNull, out OptionalText value)
+    {
+        var element = Read(request, name, bound);
+        if (element.ValueKind == JsonValueKind.Undefined)
+        {
+            value = new OptionalText(false, null);
+            return null;
+        }
+
+        if (element.ValueKind == JsonValueKind.Null)
+        {
+            value = clearOnNull ? new OptionalText(true, null) : new OptionalText(false, null);
+            return clearOnNull ? null : PlatformError.BadRequest(name + ": expected String, found Null");
+        }
+
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            value = new OptionalText(false, null);
+            return PlatformError.BadRequest(name + ": expected String, found " + JsonKinds.Of(element));
+        }
+
+        value = new OptionalText(true, element.GetString());
+        return null;
+    }
+
+    private static string? ReadMemberField(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound, string missing, string wrongKind)
+    {
+        return MemberFieldError(request, name, bound, missing, wrongKind) is null
+            ? Read(request, name, bound).GetString()
+            : null;
+    }
+
+    private static string? MemberFieldError(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound, string missing, string wrongKind)
+    {
+        var element = Read(request, name, bound);
+        if (element.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            return missing;
+        }
+
+        return element.ValueKind == JsonValueKind.String ? null : wrongKind;
     }
 
     private static List<string> UnknownArguments(RequestContext<CallToolRequestParams>? request, params string[] known)
@@ -499,6 +758,14 @@ public sealed class AgentConnectTools
         catch (StorageThrottleException exception)
         {
             return OperationResult<T>.Fail(PlatformError.TooManyRequests(exception.RetryAfter));
+        }
+        catch (StorageUnavailableException exception)
+        {
+            return OperationResult<T>.Fail(PlatformError.ServiceUnavailable(exception.RetryAfter));
+        }
+        catch (DocumentMissingException)
+        {
+            return OperationResult<T>.Fail(PlatformError.NotFound);
         }
         catch (StorageTooLargeException)
         {

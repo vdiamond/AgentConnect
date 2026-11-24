@@ -17,13 +17,15 @@ public sealed class ContentService
     /// <param name="schemas">The schema gateway.</param>
     /// <param name="audit">The audit recorder.</param>
     /// <param name="clock">The clock.</param>
+    /// <param name="options">The platform options.</param>
     public ContentService(
         IWorkspaceRepository workspaces,
         IListRepository lists,
         IItemRepository items,
         SchemaGateway schemas,
         IAuditRecorder audit,
-        IClock clock)
+        IClock clock,
+        AgentConnectOptions options)
     {
         ArgumentNullException.ThrowIfNull(workspaces);
         ArgumentNullException.ThrowIfNull(lists);
@@ -31,12 +33,14 @@ public sealed class ContentService
         ArgumentNullException.ThrowIfNull(schemas);
         ArgumentNullException.ThrowIfNull(audit);
         ArgumentNullException.ThrowIfNull(clock);
+        ArgumentNullException.ThrowIfNull(options);
         _workspaces = workspaces;
         _lists = lists;
         _items = items;
         _schemas = schemas;
         _audit = audit;
         _clock = clock;
+        _options = options;
     }
 
     /// <summary>Creates a list. FR-22.</summary>
@@ -152,6 +156,7 @@ public sealed class ContentService
                         current.Description = nextDescription;
                         current.Updated = _clock.UtcNow;
                     },
+                    _options.ConcurrencyRetries,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (DuplicateValueException)
@@ -186,6 +191,7 @@ public sealed class ContentService
                 current.DeletedAt = _clock.UtcNow;
                 current.Updated = current.DeletedAt.Value;
             },
+            _options.ConcurrencyRetries,
             cancellationToken).ConfigureAwait(false);
         Record(caller.Member.Id, AuditActions.ListDeleted, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("listId", listId));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
@@ -272,6 +278,7 @@ public sealed class ContentService
                 current.SchemaVersion += 1;
                 current.Updated = _clock.UtcNow;
             },
+            _options.ConcurrencyRetries,
             cancellationToken).ConfigureAwait(false);
         Record(caller.Member.Id, AuditActions.SchemaUpdated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspaceId), ("listId", listId));
         using var document = JsonDocument.Parse(schemaJson);
@@ -549,6 +556,7 @@ public sealed class ContentService
     private readonly SchemaGateway _schemas;
     private readonly IAuditRecorder _audit;
     private readonly IClock _clock;
+    private readonly AgentConnectOptions _options;
 
     private async Task<OperationResult<ListDocument>> GateAsync(Caller caller, string workspaceId, string? listId, PlatformAction action, bool authorizeAfterItem, CancellationToken cancellationToken)
     {

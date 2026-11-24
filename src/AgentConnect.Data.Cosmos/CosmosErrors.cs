@@ -27,9 +27,14 @@ public static class CosmosErrors
             return new DuplicateValueException();
         }
 
-        if (exception.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.RequestTimeout or HttpStatusCode.ServiceUnavailable)
+        if (exception.StatusCode == HttpStatusCode.TooManyRequests)
         {
             return Throttle(exception);
+        }
+
+        if (exception.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.ServiceUnavailable)
+        {
+            return new StorageUnavailableException(exception.RetryAfter ?? TimeSpan.FromSeconds(1));
         }
 
         if (exception.StatusCode == HttpStatusCode.RequestEntityTooLarge)

@@ -199,8 +199,8 @@ public sealed class CoreTests
         Assert.IsType<StorageThrottleException>(mapped);
         Assert.IsType<StorageTooLargeException>(CosmosErrors.MapWrite(new CosmosException("big", HttpStatusCode.RequestEntityTooLarge, 0, "act", 1)));
         Assert.IsType<StorageLimitException>(CosmosErrors.MapWrite(new CosmosException("full", HttpStatusCode.Forbidden, CosmosErrors.PartitionKeyQuotaOverLimit, "act", 1)));
-        Assert.IsType<StorageThrottleException>(CosmosErrors.MapWrite(new CosmosException("timeout", HttpStatusCode.RequestTimeout, 0, "act", 1)));
-        Assert.IsType<StorageThrottleException>(CosmosErrors.MapWrite(new CosmosException("unavailable", HttpStatusCode.ServiceUnavailable, 0, "act", 1)));
+        Assert.IsType<StorageUnavailableException>(CosmosErrors.MapWrite(new CosmosException("timeout", HttpStatusCode.RequestTimeout, 0, "act", 1)));
+        Assert.IsType<StorageUnavailableException>(CosmosErrors.MapWrite(new CosmosException("unavailable", HttpStatusCode.ServiceUnavailable, 0, "act", 1)));
         var unexpected = Assert.IsType<StorageFailureException>(CosmosErrors.MapWrite(new CosmosException("signing secret", HttpStatusCode.Unauthorized, 42, "activity-9", 1)));
         Assert.Equal("$: internal error", unexpected.Message);
         Assert.Equal(401, unexpected.StatusCode);

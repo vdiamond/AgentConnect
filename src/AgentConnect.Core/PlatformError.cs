@@ -43,6 +43,16 @@ public sealed record PlatformError(int StatusCode, string Text, TimeSpan? RetryA
     }
 
     /// <summary>
+    /// Creates a 503 <c>$: service unavailable</c> error.
+    /// </summary>
+    /// <param name="retryAfter">The Retry-After value.</param>
+    /// <returns>The error.</returns>
+    public static PlatformError ServiceUnavailable(TimeSpan retryAfter)
+    {
+        return new PlatformError(503, "$: service unavailable", retryAfter);
+    }
+
+    /// <summary>
     /// Creates a 400 error.
     /// </summary>
     /// <param name="text">The <c>path: problem</c> text.</param>

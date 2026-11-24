@@ -59,6 +59,11 @@ public sealed class MemberService
             return OperationResult<MemberResult>.Fail(denied);
         }
 
+        if (email is null)
+        {
+            return OperationResult<MemberResult>.Fail(PlatformError.BadRequest("email: required"));
+        }
+
         if (!EmailRules.TryNormalize(email, out var normalized, out var error))
         {
             return OperationResult<MemberResult>.Fail(PlatformError.BadRequest(error));
@@ -198,7 +203,7 @@ public sealed class MemberService
             PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation)));
     }
 
-    /// <summary>Assigns or removes the TenantOwner flag. There is no REST path for this in section 6. FR-9.</summary>
+    /// <summary>Assigns or removes the TenantOwner flag. FR-9.</summary>
     /// <param name="caller">The caller.</param>
     /// <param name="email">The raw email.</param>
     /// <param name="isTenantOwner">The new flag.</param>
@@ -206,13 +211,32 @@ public sealed class MemberService
     /// <returns>The member.</returns>
     public async Task<OperationResult<MemberResult>> SetTenantOwnerAsync(Caller caller, string? email, bool isTenantOwner, CancellationToken cancellationToken)
     {
-        var member = await RequireTenantMemberAsync(caller, PlatformAction.SetTenantOwner, email, cancellationToken).ConfigureAwait(false);
-        if (member.Error is not null)
+        var denied = Permissions.AuthorizeTenant(caller, PlatformAction.SetTenantOwner, null);
+        if (denied is not null)
         {
-            return OperationResult<MemberResult>.Fail(member.Error);
+            return OperationResult<MemberResult>.Fail(denied);
         }
 
-        var stored = member.Value!;
+        if (email is null)
+        {
+            return OperationResult<MemberResult>.Fail(PlatformError.BadRequest("email: required"));
+        }
+
+        if (!EmailRules.TryNormalize(email, out var normalized, out var emailError))
+        {
+            return OperationResult<MemberResult>.Fail(PlatformError.BadRequest(emailError));
+        }
+
+        var stored = await _members.FindByEmailAsync(caller.Tenant.Id, normalized, cancellationToken).ConfigureAwait(false);
+        if (stored is null)
+        {
+            return OperationResult<MemberResult>.Fail(PlatformError.NotFound);
+        }
+
+        if (stored.Id == caller.Member.Id)
+        {
+            return OperationResult<MemberResult>.Fail(PlatformError.NotAllowedOnYourself);
+        }
         if (stored.IsTenantOwner != isTenantOwner)
         {
             stored = await UpdateMemberAsync(stored.TenantId, stored.Id, current =>
@@ -246,9 +270,19 @@ public sealed class MemberService
             return OperationResult<RoleAssignmentResult>.Fail(denied);
         }
 
+        if (email is null)
+        {
+            return OperationResult<RoleAssignmentResult>.Fail(PlatformError.BadRequest("email: required"));
+        }
+
         if (!EmailRules.TryNormalize(email, out var normalized, out var emailError))
         {
             return OperationResult<RoleAssignmentResult>.Fail(PlatformError.BadRequest(emailError));
+        }
+
+        if (role is null)
+        {
+            return OperationResult<RoleAssignmentResult>.Fail(PlatformError.BadRequest("role: required"));
         }
 
         if (!StoredRoles.TryParse(role, out var stored))
@@ -296,6 +330,11 @@ public sealed class MemberService
         if (denied is not null)
         {
             return OperationResult<WorkspaceMemberView>.Fail(denied);
+        }
+
+        if (role is null)
+        {
+            return OperationResult<WorkspaceMemberView>.Fail(PlatformError.BadRequest("role: required"));
         }
 
         if (!StoredRoles.TryParse(role, out var stored))
@@ -559,6 +598,7 @@ public sealed class MemberService
             ct => _members.GetAsync(tenantId, memberId, ct),
             (current, ct) => _members.ReplaceAsync(current, ct),
             mutate,
+            _options.ConcurrencyRetries,
             cancellationToken);
     }
 

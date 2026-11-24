@@ -268,6 +268,22 @@ public sealed class MoreSpecTests
         var throttled = await _session.Platform.SendAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/items/throttled", new { title = "ok", status = "open", priority = 1, due = "2026-11-25T00:00:00Z", done = false }, owner.Token, admin: false);
         Assert.Equal(429, throttled.Status);
         Assert.Equal("3", throttled.Response.Headers.RetryAfter?.Delta?.TotalSeconds.ToString("0"));
+        Assert.Equal("$: too many requests", Error(throttled.Body));
+        _session.Platform.Database.WriteFault = ItemWriteFault.TimedOut;
+        var timedOut = await _session.Platform.SendAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/items/timed-out", new { title = "ok", status = "open", priority = 1, due = "2026-11-25T00:00:00Z", done = false }, owner.Token, admin: false);
+        Assert.Equal(503, timedOut.Status);
+        Assert.Equal("$: service unavailable", Error(timedOut.Body));
+        Assert.Equal("3", timedOut.Response.Headers.RetryAfter?.Delta?.TotalSeconds.ToString("0"));
+        _session.Platform.Database.WriteFault = ItemWriteFault.Unavailable;
+        var unavailable = await _session.ToolAsync(owner.Token, "upsert_item", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["itemId"] = "unavailable",
+            ["data"] = Session.Node("""{"title":"ok","status":"open","priority":1,"due":"2026-11-25T00:00:00Z","done":false}"""),
+        });
+        Assert.True(unavailable.IsError);
+        Assert.Equal("$: service unavailable", unavailable.Text);
         _session.Platform.Database.WriteFault = ItemWriteFault.PartitionFull;
         var full = await _session.SendAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/items/full", new { title = "ok", status = "open", priority = 1, due = "2026-11-25T00:00:00Z", done = false }, owner.Token);
         Assert.Equal(507, full.Status);
@@ -558,12 +574,17 @@ public sealed class MoreSpecTests
         Assert.Equal("continuation: invalid token", listed.Text);
 
         var jsonNull = JsonSerializer.Deserialize<JsonElement>("null");
-        var where = await QueryAsync(owner.Token, workspace, list, "where", jsonNull);
-        Assert.Equal("where: expected array, found Null", where.Text);
-        var orderBy = await QueryAsync(owner.Token, workspace, list, "orderBy", jsonNull);
-        Assert.Equal("orderBy: expected Object, found Null", orderBy.Text);
-        var schemaVersion = await QueryAsync(owner.Token, workspace, list, "schemaVersion", jsonNull);
-        Assert.Equal("schemaVersion: invalid filter", schemaVersion.Text);
+        foreach (var name in new[] { "where", "orderBy", "schemaVersion" })
+        {
+            var omitted = await _session.ToolAsync(owner.Token, "query_items", new Dictionary<string, object?>
+            {
+                ["workspaceId"] = workspace,
+                ["listId"] = list,
+                ["shape"] = "ids",
+                [name] = jsonNull,
+            });
+            Assert.False(omitted.IsError);
+        }
     }
 
     #region private

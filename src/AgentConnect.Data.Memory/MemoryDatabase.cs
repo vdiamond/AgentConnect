@@ -13,6 +13,15 @@ public enum ItemWriteFault
     /// <summary>Cosmos DB throttling.</summary>
     Throttled,
 
+    /// <summary>A request timeout, returned as 503.</summary>
+    TimedOut,
+
+    /// <summary>Cosmos DB is unavailable, returned as 503.</summary>
+    Unavailable,
+
+    /// <summary>An unexpected storage failure, returned as 500.</summary>
+    Unexpected,
+
     /// <summary>The list partition is full.</summary>
     PartitionFull,
 
@@ -28,8 +37,23 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     /// <summary>Gets or sets a fault thrown by the next item write.</summary>
     public ItemWriteFault WriteFault { get; set; }
 
-    /// <summary>Gets or sets the Retry-After value used for <see cref="ItemWriteFault.Throttled"/>.</summary>
+    /// <summary>Gets or sets the Retry-After value used for throttled and unavailable writes.</summary>
     public TimeSpan ThrottleRetryAfter { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>Gets or sets how many of the next document replacements fail as a stale etag. FR-53.</summary>
+    public int ReplaceConflictsRemaining { get; set; }
+
+    /// <summary>Removes a list document so an in-flight update observes the delete. FR-51.</summary>
+    /// <param name="tenantId">The tenant id.</param>
+    /// <param name="workspaceId">The workspace id.</param>
+    /// <param name="listId">The list id.</param>
+    public void ForgetList(string tenantId, string workspaceId, string listId)
+    {
+        lock (_gate)
+        {
+            _lists.Remove(Key(tenantId, workspaceId, listId));
+        }
+    }
 
     /// <summary>
     /// Runs after a list is read and before the clone is returned.
@@ -111,7 +135,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         lock (_gate)
         {
             member.StampKey();
-            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailKey == member.EmailKey))
+            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailLower == member.EmailLower))
             {
                 throw new DuplicateValueException();
             }
@@ -128,7 +152,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         lock (_gate)
         {
             member.StampKey();
-            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailKey == member.EmailKey))
+            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailLower == member.EmailLower))
             {
                 throw new DuplicateValueException();
             }
@@ -169,10 +193,10 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         lock (_gate)
         {
             var ordered = _members.Values.Where(member => member.TenantId == tenantId && member.WorkspaceRoles.ContainsKey(workspaceId))
-                .OrderBy(member => member.Email, StringComparer.Ordinal)
+                .OrderBy(member => member.EmailLower, StringComparer.Ordinal)
                 .ThenBy(member => member.Id, StringComparer.Ordinal)
                 .ToList();
-            return Task.FromResult(Page(ordered, pageSize, cursor, member => (0, member.Email + "\n" + member.Id), Clone));
+            return Task.FromResult(Page(ordered, pageSize, cursor, member => (0, member.EmailLower + "\n" + member.Id), Clone));
         }
     }
 
@@ -416,6 +440,15 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
             case ItemWriteFault.Throttled:
             {
                 throw new StorageThrottleException(ThrottleRetryAfter);
+            }
+            case ItemWriteFault.TimedOut:
+            case ItemWriteFault.Unavailable:
+            {
+                throw new StorageUnavailableException(ThrottleRetryAfter);
+            }
+            case ItemWriteFault.Unexpected:
+            {
+                throw new StorageFailureException(500, 0, "activity-9");
             }
             case ItemWriteFault.PartitionFull:
             {
@@ -665,10 +698,21 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         store[key] = Clone(incoming);
     }
 
-    private static void Replace<T>(Dictionary<string, T> store, string key, T incoming)
+    private void Replace<T>(Dictionary<string, T> store, string key, T incoming)
         where T : IConcurrencyDocument
     {
-        if (!store.TryGetValue(key, out var stored) || !string.Equals(stored.ETag, incoming.ETag, StringComparison.Ordinal))
+        if (!store.TryGetValue(key, out var stored))
+        {
+            throw new DocumentMissingException();
+        }
+
+        if (ReplaceConflictsRemaining > 0)
+        {
+            ReplaceConflictsRemaining--;
+            throw new StorageConflictException();
+        }
+
+        if (!string.Equals(stored.ETag, incoming.ETag, StringComparison.Ordinal))
         {
             throw new StorageConflictException();
         }
