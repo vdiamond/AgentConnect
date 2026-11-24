@@ -8,9 +8,7 @@ Packaging for the three AgentConnect hosts. The image does not contain secrets. 
 | MCP server (`/mcp`) | `src/AgentConnect.Mcp/Dockerfile` | `ghcr.io/vdiamond/agentconnect-mcp` | 8080 |
 | Deletion job | `src/AgentConnect.DeletionJob/Dockerfile` | `ghcr.io/vdiamond/agentconnect-deletionjob` | does not listen |
 
-Api and Mcp use the .NET 10 ASP.NET image and set `ASPNETCORE_HTTP_PORTS=8080`. The deletion job uses the .NET 10 runtime image. All three run as the image's non-root `app` user. Base images are `mcr.microsoft.com/dotnet/sdk:10.0`, `mcr.microsoft.com/dotnet/aspnet:10.0`, and `mcr.microsoft.com/dotnet/runtime:10.0`.
-
-`AgentConnect.Composition` references the ASP.NET shared framework, and the deletion job references Composition, so the published job asks for `Microsoft.AspNetCore.App`. On the runtime image the process exits before `Main`. Api and Mcp use the ASP.NET image and are not affected.
+All three final images use `mcr.microsoft.com/dotnet/aspnet:10.0` and run as the image's non-root `app` user. The build stage is `mcr.microsoft.com/dotnet/sdk:10.0`. Api and Mcp set `ASPNETCORE_HTTP_PORTS=8080`. The deletion job uses the ASP.NET image because `AgentConnect.Composition` references `Microsoft.AspNetCore.App`. It is a one-shot process and does not listen.
 
 ## Build, tag, and push
 

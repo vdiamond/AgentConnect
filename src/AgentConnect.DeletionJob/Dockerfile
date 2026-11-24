@@ -17,9 +17,9 @@ RUN dotnet publish src/AgentConnect.DeletionJob/AgentConnect.DeletionJob.csproj 
     --self-contained false \
     /p:UseAppHost=false
 
-# Composition references Microsoft.AspNetCore.App, so this process does not
-# start on the runtime image. The base stays the runtime image on purpose.
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
+# Composition references Microsoft.AspNetCore.App, so the final stage is the
+# ASP.NET image. The job is a one-shot process and does not listen.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 USER app
