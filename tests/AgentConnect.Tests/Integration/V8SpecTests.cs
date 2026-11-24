@@ -263,6 +263,10 @@ public sealed class V8SpecTests
         var owner = await _session.CreateTenantAsync("Shapes");
         var tenant = await _session.Platform.Database.GetAsync(owner.TenantId, CancellationToken.None);
         Assert.Null(tenant!.Subscription);
+        using (var stored = JsonDocument.Parse(JsonSerializer.Serialize(tenant, CosmosJsonSerializer.Options)))
+        {
+            Assert.Equal(JsonValueKind.Null, stored.RootElement.GetProperty("subscription").ValueKind);
+        }
         await using var client = await _session.Platform.McpClientAsync(owner.Token);
         var tools = await client.ListToolsAsync();
         var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
@@ -476,7 +480,7 @@ public sealed class V8SpecTests
             ("change_workspace_role", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = other, ["role"] = "WorkspaceWrite", ["foo"] = 1 }),
             ("revoke_workspace_access", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = other, ["foo"] = 1 }),
             ("list_workspace_members", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["foo"] = 1 }),
-            ("set_tenant_owner", new Dictionary<string, object?> { ["email"] = owner.Email, ["isTenantOwner"] = true, ["foo"] = 1 }),
+            ("set_tenant_owner", new Dictionary<string, object?> { ["email"] = other, ["isTenantOwner"] = true, ["foo"] = 1 }),
         };
         foreach (var call in calls)
         {
@@ -786,6 +790,249 @@ public sealed class V8SpecTests
         Assert.Equal("$: expected Object, found Null", Error(unwrappedSchema.Body));
         var unwrappedItem = await RawAsync(HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/items/z", "null", owner.Token);
         Assert.Equal("$: expected Object, found Null", Error(unwrappedItem.Body));
+    }
+
+    [Fact]
+    [Trait("T", "T-65")]
+    [Trait("T", "T-79")]
+    public async Task RequiredNullsBlankIdsAndRoleOrder_MatchTheSpec()
+    {
+        var owner = await _session.CreateTenantAsync("Probe");
+        var workspace = await WorkspaceAsync(owner.Token);
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token);
+        var list = await ListAsync(owner.Token, workspace);
+        var writer = await _session.AddMemberAsync(owner.Token, "writer");
+        await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = writer, role = "WorkspaceOwner" }, owner.Token);
+        await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(writer) + "/send-invitation", new { }, owner.Token);
+        var writerToken = Session.TokenFrom(_session.Platform.Email.For(writer).Last().Body);
+        var jsonNull = JsonSerializer.Deserialize<JsonElement>("null");
+
+        var nullList = await _session.ToolAsync(owner.Token, "update_list", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = jsonNull,
+        });
+        Assert.Equal("listId: required", nullList.Text);
+
+        var blankRoutes = new (HttpMethod Method, string Url, int Status, string Text)[]
+        {
+            (HttpMethod.Get, "/workspaces/%20/lists", 404, "$: not found"),
+            (HttpMethod.Patch, "/workspaces/%20", 404, "$: not found"),
+            (HttpMethod.Get, "/workspaces/%20/members", 404, "$: not found"),
+            (HttpMethod.Delete, "/workspaces/%20", 404, "$: not found"),
+            (HttpMethod.Get, "/workspaces/" + workspace + "/lists/%20/schema", 404, "$: not found"),
+            (HttpMethod.Put, "/workspaces/" + workspace + "/lists/%20/schema", 404, "$: not found"),
+            (HttpMethod.Patch, "/workspaces/" + workspace + "/lists/%20", 404, "$: not found"),
+            (HttpMethod.Delete, "/workspaces/" + workspace + "/lists/%20", 404, "$: not found"),
+            (HttpMethod.Get, "/workspaces/" + workspace + "/lists/%20/items?shape=ids", 404, "$: not found"),
+            (HttpMethod.Get, "/workspaces/" + workspace + "/lists/" + list + "/items/%20", 400, "itemId: invalid"),
+            (HttpMethod.Put, "/workspaces/" + workspace + "/lists/" + list + "/items/%20", 400, "itemId: invalid"),
+            (HttpMethod.Delete, "/workspaces/" + workspace + "/lists/" + list + "/items/%20", 400, "itemId: invalid"),
+            (HttpMethod.Get, "/workspaces/" + workspace + "/lists/%20/items/i1", 404, "$: not found"),
+            (HttpMethod.Put, "/workspaces/" + workspace + "/lists/%20/items/i1", 404, "$: not found"),
+        };
+        foreach (var route in blankRoutes)
+        {
+            var response = route.Method == HttpMethod.Put && route.Url.Contains("/schema", StringComparison.Ordinal)
+                ? await RawAsync(route.Method, route.Url, TaskSchema, owner.Token)
+                : route.Method == HttpMethod.Put
+                    ? await RawAsync(route.Method, route.Url, """{"title":"a","status":"open","priority":1,"due":"2026-11-25T00:00:00Z","done":false,"tags":["a"]}""", owner.Token)
+                    : route.Method == HttpMethod.Patch
+                        ? await RawAsync(route.Method, route.Url, """{"name":"X"}""", owner.Token)
+                        : await _session.SendAsync(route.Method, route.Url, null, owner.Token);
+            Assert.Equal(route.Status, response.Status);
+            Assert.Equal(route.Text, Error(response.Body));
+        }
+
+        foreach (var blank in new[] { "", " " })
+        {
+            foreach (var tool in new[] { "list_lists", "update_workspace", "list_workspace_members" })
+            {
+                var result = await _session.ToolAsync(owner.Token, tool, new Dictionary<string, object?> { ["workspaceId"] = blank });
+                Assert.Equal("$: not found", result.Text);
+            }
+
+            foreach (var tool in new[] { "get_schema", "update_schema", "update_list", "delete_list", "query_items", "get_item", "upsert_item", "delete_item" })
+            {
+                var arguments = new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = blank, ["itemId"] = "i" };
+                if (tool == "query_items")
+                {
+                    arguments["shape"] = "ids";
+                }
+
+                if (tool == "update_schema")
+                {
+                    arguments["schema"] = Session.Node(TaskSchema);
+                }
+
+                if (tool == "upsert_item")
+                {
+                    arguments["data"] = Session.Node("""{"title":"a","status":"open","priority":1,"due":"2026-11-25T00:00:00Z","done":false,"tags":["a"]}""");
+                }
+
+                var result = await _session.ToolAsync(owner.Token, tool, arguments);
+                Assert.Equal("$: not found", result.Text);
+            }
+
+            foreach (var tool in new[] { "get_item", "upsert_item", "delete_item" })
+            {
+                var arguments = new Dictionary<string, object?> { ["workspaceId"] = workspace, ["listId"] = list, ["itemId"] = blank };
+                if (tool == "upsert_item")
+                {
+                    arguments["data"] = Session.Node("""{"title":"a","status":"open","priority":1,"due":"2026-11-25T00:00:00Z","done":false,"tags":["a"]}""");
+                }
+
+                var result = await _session.ToolAsync(owner.Token, tool, arguments);
+                Assert.Equal("itemId: invalid", result.Text);
+            }
+        }
+
+        foreach (var path in new[] { "/send-invitation", "/token/send", "/token/regenerate" })
+        {
+            var denied = await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString("ghost@example.com") + path, new { }, writerToken);
+            Assert.Equal(403, denied.Status);
+            Assert.Equal("$: not allowed", Error(denied.Body));
+        }
+
+        var deleted = await _session.SendAsync(HttpMethod.Delete, "/members/" + Uri.EscapeDataString("ghost@example.com"), null, writerToken);
+        Assert.Equal(403, deleted.Status);
+        Assert.Equal("$: not allowed", Error(deleted.Body));
+
+        var missingOwner = await _session.ToolAsync(owner.Token, "set_tenant_owner", new Dictionary<string, object?>
+        {
+            ["email"] = "ghost@example.com",
+            ["isTenantOwner"] = true,
+            ["foo"] = 1,
+        });
+        Assert.Equal("$: not found", missingOwner.Text);
+        var selfOwner = await _session.ToolAsync(owner.Token, "set_tenant_owner", new Dictionary<string, object?>
+        {
+            ["email"] = owner.Email,
+            ["isTenantOwner"] = true,
+            ["foo"] = 1,
+        });
+        Assert.Equal("$: not allowed on yourself", selfOwner.Text);
+        var selfRole = await _session.ToolAsync(writerToken, "change_workspace_role", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["email"] = writer,
+            ["role"] = "WorkspaceRead",
+            ["foo"] = 1,
+        });
+        Assert.Equal("$: not allowed on yourself", selfRole.Text);
+
+        var emailNull = await RawAdminAsync("""{"name":"Y","email":null}""");
+        Assert.Equal("email: required", Error(emailNull.Body));
+        var emailMissing = await RawAdminAsync("""{"name":"X"}""");
+        Assert.Equal("email: required", Error(emailMissing.Body));
+        var nameNull = await RawAdminAsync("""{"name":null,"email":"n@example.com"}""");
+        Assert.Equal("name: required", Error(nameNull.Body));
+        var nameMissing = await RawAdminAsync("""{"email":"n@example.com"}""");
+        Assert.Equal("name: required", Error(nameMissing.Body));
+        var workspaceNull = await RawAsync(HttpMethod.Post, "/workspaces", """{"name":null}""", owner.Token);
+        Assert.Equal("name: required", Error(workspaceNull.Body));
+        var workspaceMissing = await RawAsync(HttpMethod.Post, "/workspaces", "{}", owner.Token);
+        Assert.Equal("name: required", Error(workspaceMissing.Body));
+        var listNull = await RawAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", """{"name":null,"schema":{"properties":[]}}""", owner.Token);
+        Assert.Equal("name: required", Error(listNull.Body));
+        var listMissing = await RawAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", """{"schema":{"properties":[]}}""", owner.Token);
+        Assert.Equal("name: required", Error(listMissing.Body));
+
+        var created = await RawAsync(HttpMethod.Post, "/workspaces", """{"name":"Z2","members":null}""", owner.Token);
+        Assert.Equal(200, created.Status);
+        Assert.Equal(0, Json(created.Body).GetProperty("members").GetArrayLength());
+
+        var workspaceTools = new[]
+        {
+            "update_workspace", "list_lists", "create_list", "update_list", "delete_list", "get_schema", "update_schema",
+            "query_items", "get_item", "upsert_item", "delete_item", "invite_member", "change_workspace_role",
+            "revoke_workspace_access", "list_workspace_members",
+        };
+        var listTools = new[] { "update_list", "delete_list", "get_schema", "update_schema", "query_items", "get_item", "upsert_item", "delete_item" };
+        var itemTools = new[] { "get_item", "delete_item" };
+        var probes = new List<(string Tool, string Field)>();
+        probes.AddRange(workspaceTools.Select(tool => (tool, "workspaceId")));
+        probes.AddRange(listTools.Select(tool => (tool, "listId")));
+        probes.AddRange(itemTools.Select(tool => (tool, "itemId")));
+        probes.Add(("create_list", "name"));
+        probes.Add(("upsert_item", "data"));
+        foreach (var probe in probes)
+        {
+            foreach (var missing in new bool[] { true, false })
+            {
+                var arguments = ArgumentsFor(probe.Tool, workspace, list, owner.Email);
+                if (missing)
+                {
+                    arguments.Remove(probe.Field);
+                }
+                else
+                {
+                    arguments[probe.Field] = jsonNull;
+                }
+
+                var result = await _session.ToolAsync(owner.Token, probe.Tool, arguments);
+                Assert.True(result.IsError);
+                Assert.Equal(probe.Field + ": required", result.Text);
+            }
+        }
+    }
+
+    private static Dictionary<string, object?> ArgumentsFor(string tool, string workspace, string list, string email)
+    {
+        var arguments = new Dictionary<string, object?>();
+        if (tool != "set_tenant_owner")
+        {
+            arguments["workspaceId"] = workspace;
+        }
+
+        if (tool is "update_list" or "delete_list" or "get_schema" or "update_schema" or "query_items" or "get_item" or "delete_item" or "upsert_item")
+        {
+            arguments["listId"] = list;
+        }
+
+        if (tool is "get_item" or "delete_item" or "upsert_item")
+        {
+            arguments["itemId"] = "i";
+        }
+
+        if (tool == "query_items")
+        {
+            arguments["shape"] = "ids";
+        }
+
+        if (tool is "create_list" or "update_schema")
+        {
+            arguments["schema"] = Session.Node("""{"properties":[]}""");
+        }
+
+        if (tool == "create_list")
+        {
+            arguments["name"] = "Named";
+        }
+
+        if (tool == "upsert_item")
+        {
+            arguments["data"] = Session.Node("""{"title":"a"}""");
+        }
+
+        if (tool is "invite_member" or "change_workspace_role")
+        {
+            arguments["email"] = email;
+            arguments["role"] = "WorkspaceRead";
+        }
+
+        return arguments;
+    }
+
+    private async Task<(int Status, string Body)> RawAdminAsync(string body)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/tenants")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Add("X-Admin-Key", PlatformFixture.AdminKey);
+        var response = await _session.Platform.ApiClient.SendAsync(request);
+        return ((int)response.StatusCode, await response.Content.ReadAsStringAsync());
     }
 
     private void SoftDeleteList((string TenantId, string Email, string Token) owner, string workspaceId, string listId)

@@ -45,6 +45,7 @@ public sealed class TenantDocument : IConcurrencyDocument
     /// <summary>
     /// Gets or sets subscription info. Billing is out of scope; the field is stored as JSON null until its shape is defined.
     /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public object? Subscription { get; set; }
 
     /// <inheritdoc />

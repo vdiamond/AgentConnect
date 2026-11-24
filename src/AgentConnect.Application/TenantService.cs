@@ -55,9 +55,19 @@ public sealed class TenantService
     /// <returns>The tenant, or an error.</returns>
     public async Task<OperationResult<TenantCreatedResult>> CreateAsync(string? name, string? email, CancellationToken cancellationToken)
     {
+        if (name is null)
+        {
+            return OperationResult<TenantCreatedResult>.Fail(PlatformError.BadRequest("name: required"));
+        }
+
         if (!NameRules.TryNormalizeName(name, out var tenantName, out var nameError))
         {
             return OperationResult<TenantCreatedResult>.Fail(PlatformError.BadRequest(nameError));
+        }
+
+        if (email is null)
+        {
+            return OperationResult<TenantCreatedResult>.Fail(PlatformError.BadRequest("email: required"));
         }
 
         if (!EmailRules.TryNormalize(email, out var ownerEmail, out var emailError))

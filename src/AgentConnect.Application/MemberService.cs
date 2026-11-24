@@ -210,8 +210,9 @@ public sealed class MemberService
     /// <param name="email">The raw email.</param>
     /// <param name="isTenantOwner">The new flag.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The member.</returns>
-    public async Task<OperationResult<MemberResult>> SetTenantOwnerAsync(Caller caller, string? email, bool isTenantOwner, CancellationToken cancellationToken)
+    public async Task<OperationResult<MemberResult>> SetTenantOwnerAsync(Caller caller, string? email, bool isTenantOwner, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
         var denied = Permissions.AuthorizeTenant(caller, PlatformAction.SetTenantOwner, null);
         if (denied is not null)
@@ -238,6 +239,11 @@ public sealed class MemberService
         if (stored.Id == caller.Member.Id)
         {
             return OperationResult<MemberResult>.Fail(PlatformError.NotAllowedOnYourself);
+        }
+
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<MemberResult>.Fail(blocked);
         }
         if (stored.IsTenantOwner != isTenantOwner)
         {
@@ -341,11 +347,6 @@ public sealed class MemberService
             return OperationResult<WorkspaceMemberView>.Fail(denied);
         }
 
-        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
-        {
-            return OperationResult<WorkspaceMemberView>.Fail(blocked);
-        }
-
         if (role is null)
         {
             return OperationResult<WorkspaceMemberView>.Fail(PlatformError.BadRequest("role: required"));
@@ -360,6 +361,11 @@ public sealed class MemberService
         if (self is not null)
         {
             return OperationResult<WorkspaceMemberView>.Fail(self);
+        }
+
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<WorkspaceMemberView>.Fail(blocked);
         }
 
         if (current != stored)
@@ -587,32 +593,27 @@ public sealed class MemberService
 
     private async Task<OperationResult<MemberDocument>> RequireTenantMemberAsync(Caller caller, PlatformAction action, string? email, CancellationToken cancellationToken)
     {
-        var emailOk = EmailRules.TryNormalize(email, out var normalized, out var emailError);
-        MemberDocument? member = null;
-        if (emailOk)
+        var denied = Permissions.AuthorizeTenant(caller, action, null);
+        if (denied is not null)
         {
-            member = await _members.FindByEmailAsync(caller.Tenant.Id, normalized, cancellationToken).ConfigureAwait(false);
+            return OperationResult<MemberDocument>.Fail(denied);
         }
 
+        if (!EmailRules.TryNormalize(email, out var normalized, out var emailError))
+        {
+            return OperationResult<MemberDocument>.Fail(PlatformError.BadRequest(emailError));
+        }
+
+        var member = await _members.FindByEmailAsync(caller.Tenant.Id, normalized, cancellationToken).ConfigureAwait(false);
         if (member is null)
         {
-            if (!emailOk && Permissions.AuthorizeTenant(caller, action, null) is PlatformError denied)
-            {
-                return OperationResult<MemberDocument>.Fail(denied);
-            }
-
-            if (!emailOk)
-            {
-                return OperationResult<MemberDocument>.Fail(PlatformError.BadRequest(emailError));
-            }
-
             return OperationResult<MemberDocument>.Fail(PlatformError.NotFound);
         }
 
-        var error = Permissions.AuthorizeTenant(caller, action, member.Id);
-        if (error is not null)
+        var self = Permissions.AuthorizeTenant(caller, action, member.Id);
+        if (self is not null)
         {
-            return OperationResult<MemberDocument>.Fail(error);
+            return OperationResult<MemberDocument>.Fail(self);
         }
 
         return OperationResult<MemberDocument>.Ok(member);
@@ -658,6 +659,11 @@ public sealed class MemberService
 
     private async Task<OperationResult<WorkspaceDocument>> LiveWorkspaceAsync(Caller caller, string workspaceId, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(workspaceId))
+        {
+            return OperationResult<WorkspaceDocument>.Fail(PlatformError.NotFound);
+        }
+
         var workspace = await _workspaces.GetAsync(caller.Tenant.Id, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace is null || workspace.DeletedAt is not null)
         {

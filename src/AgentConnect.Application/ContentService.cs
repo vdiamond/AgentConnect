@@ -66,6 +66,11 @@ public sealed class ContentService
             return OperationResult<ListView>.Fail(blocked);
         }
 
+        if (name is null)
+        {
+            return OperationResult<ListView>.Fail(PlatformError.BadRequest("name: required"));
+        }
+
         if (!NameRules.TryNormalizeName(name, out var listName, out var nameError))
         {
             return OperationResult<ListView>.Fail(PlatformError.BadRequest(nameError));
@@ -134,6 +139,11 @@ public sealed class ContentService
         if (PlatformSupport.AfterGate(afterGate) is { } blocked)
         {
             return OperationResult<ListView>.Fail(blocked);
+        }
+
+        if (listId is null)
+        {
+            return OperationResult<ListView>.Fail(PlatformError.BadRequest("listId: required"));
         }
 
         var list = gate.Value!;
@@ -621,6 +631,11 @@ public sealed class ContentService
 
     private async Task<OperationResult<ListDocument>> GateAsync(Caller caller, string workspaceId, string? listId, PlatformAction action, bool authorizeAfterItem, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(workspaceId) || (listId is not null && string.IsNullOrWhiteSpace(listId)))
+        {
+            return OperationResult<ListDocument>.Fail(PlatformError.NotFound);
+        }
+
         var workspace = await _workspaces.GetAsync(caller.Tenant.Id, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace is null || workspace.DeletedAt is not null || !caller.CanSee(workspaceId))
         {

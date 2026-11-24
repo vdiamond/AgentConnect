@@ -51,6 +51,11 @@ public sealed class WorkspaceService
             return OperationResult<WorkspaceCreatedResult>.Fail(denied);
         }
 
+        if (name is null)
+        {
+            return OperationResult<WorkspaceCreatedResult>.Fail(PlatformError.BadRequest("name: required"));
+        }
+
         if (!NameRules.TryNormalizeName(name, out var workspaceName, out var nameError))
         {
             return OperationResult<WorkspaceCreatedResult>.Fail(PlatformError.BadRequest(nameError));
@@ -121,6 +126,11 @@ public sealed class WorkspaceService
     /// <returns>The confirmation.</returns>
     public async Task<OperationResult<DeletedResult>> DeleteAsync(Caller caller, string workspaceId, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(workspaceId))
+        {
+            return OperationResult<DeletedResult>.Fail(PlatformError.NotFound);
+        }
+
         var workspace = await _workspaces.GetAsync(caller.Tenant.Id, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace is null || workspace.DeletedAt is not null)
         {
@@ -194,6 +204,11 @@ public sealed class WorkspaceService
     /// <returns>The workspace.</returns>
     public async Task<OperationResult<WorkspaceUpdatedResult>> UpdateAsync(Caller caller, string workspaceId, OptionalText name, OptionalText description, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
+        if (string.IsNullOrWhiteSpace(workspaceId))
+        {
+            return OperationResult<WorkspaceUpdatedResult>.Fail(PlatformError.NotFound);
+        }
+
         var workspace = await _workspaces.GetAsync(caller.Tenant.Id, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace is null || workspace.DeletedAt is not null || !caller.CanSee(workspaceId))
         {

@@ -140,7 +140,7 @@ public static class ItemIdRules
     /// <returns><see langword="true"/> when the id is allowed.</returns>
     public static bool IsValid(string? itemId)
     {
-        if (string.IsNullOrEmpty(itemId) || itemId.Length > 255 || ContainsForbidden(itemId))
+        if (string.IsNullOrWhiteSpace(itemId) || itemId.Length > 255 || ContainsForbidden(itemId))
         {
             return false;
         }

@@ -252,7 +252,7 @@ public static class ApiEndpoints
         }
 
         var initial = new List<InitialRole>();
-        if (body.TryGetProperty("members", out var members))
+        if (body.TryGetProperty("members", out var members) && members.ValueKind != JsonValueKind.Null)
         {
             if (members.ValueKind != JsonValueKind.Array)
             {
