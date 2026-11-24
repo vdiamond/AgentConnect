@@ -18,7 +18,7 @@ public static class CosmosErrors
     /// Maps a <see cref="CosmosException"/> thrown by an item write.
     /// </summary>
     /// <param name="exception">The exception.</param>
-    /// <returns>A storage exception, or the original exception when it is not one of the mapped cases.</returns>
+    /// <returns>A storage exception. The Cosmos exception text is not returned to callers.</returns>
     public static Exception MapWrite(CosmosException exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
@@ -27,9 +27,9 @@ public static class CosmosErrors
             return new DuplicateValueException();
         }
 
-        if (exception.StatusCode == HttpStatusCode.TooManyRequests)
+        if (exception.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.RequestTimeout or HttpStatusCode.ServiceUnavailable)
         {
-            return new StorageThrottleException(exception.RetryAfter ?? TimeSpan.FromSeconds(1));
+            return Throttle(exception);
         }
 
         if (exception.StatusCode == HttpStatusCode.RequestEntityTooLarge)
@@ -42,8 +42,17 @@ public static class CosmosErrors
             return new StorageLimitException();
         }
 
-        return exception;
+        return Throttle(exception);
     }
+
+    #region private
+
+    private static StorageThrottleException Throttle(CosmosException exception)
+    {
+        return new StorageThrottleException(exception.RetryAfter ?? TimeSpan.FromSeconds(1));
+    }
+
+    #endregion
 }
 
 /// <summary>

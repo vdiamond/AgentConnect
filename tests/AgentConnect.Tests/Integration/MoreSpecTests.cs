@@ -383,6 +383,49 @@ public sealed class MoreSpecTests
     }
 
     [Fact]
+    [Trait("T", "T-53")]
+    public async Task EncodedForbiddenItemId_IsRejectedOnRestAndMcp()
+    {
+        var owner = await _session.CreateTenantAsync("Slash");
+        var workspace = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces", new { name = "Ops", members = new[] { new { email = owner.Email, role = "WorkspaceOwner" } } }, owner.Token)).Body).GetProperty("id").GetString()!;
+        var loose = """{"properties":[{"name":"title","type":"String","required":true}]}""";
+        var list = Json((await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/lists", new { name = "Loose", schema = JsonDocument.Parse(loose).RootElement }, owner.Token)).Body).GetProperty("id").GetString()!;
+        foreach (var itemId in new[] { "a%2Fb", "a%5Cb", "a%3Fb", "a%23b" })
+        {
+            var path = "/workspaces/" + workspace + "/lists/" + list + "/items/" + itemId;
+            var put = await _session.SendAsync(HttpMethod.Put, path, new { title = "x" }, owner.Token);
+            Assert.Equal(400, put.Status);
+            Assert.Equal("itemId: invalid", Error(put.Body));
+            Assert.DoesNotContain("Exception", put.Body, StringComparison.Ordinal);
+            var get = await _session.SendAsync(HttpMethod.Get, path, null, owner.Token);
+            Assert.Equal(400, get.Status);
+            Assert.Equal("itemId: invalid", Error(get.Body));
+            var deleted = await _session.SendAsync(HttpMethod.Delete, path, null, owner.Token);
+            Assert.Equal(400, deleted.Status);
+            Assert.Equal("itemId: invalid", Error(deleted.Body));
+        }
+
+        var mcp = await _session.ToolAsync(owner.Token, "upsert_item", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["itemId"] = "a%2Fb",
+            ["data"] = Session.Node("""{"title":"x"}"""),
+        });
+        Assert.True(mcp.IsError);
+        Assert.Equal("itemId: invalid", mcp.Text);
+        var slash = await _session.ToolAsync(owner.Token, "upsert_item", new Dictionary<string, object?>
+        {
+            ["workspaceId"] = workspace,
+            ["listId"] = list,
+            ["itemId"] = "a/b",
+            ["data"] = Session.Node("""{"title":"x"}"""),
+        });
+        Assert.True(slash.IsError);
+        Assert.Equal("itemId: invalid", slash.Text);
+    }
+
+    [Fact]
     [Trait("T", "T-52")]
     public async Task QueryItems_RejectsAnObjectWhereAndUnknownArguments()
     {

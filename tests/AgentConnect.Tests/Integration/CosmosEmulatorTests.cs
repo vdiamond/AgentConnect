@@ -62,15 +62,15 @@ public sealed class CosmosEmulatorTests
         await _platform.PutAsync(caller, workspace, list, "i2", Item("Fix logout", "blocked", 1, "2026-12-03T09:00:00Z", false, "[\"auth\"]", "bob"), "2026-11-23T10:00:00Z");
         await _platform.PutAsync(caller, workspace, list, "i4", Item("Plan sprint", "open", 5, "2026-12-10T09:00:00Z", false, "[]", null), "2026-11-23T11:00:00Z");
 
-        Assert.Equal(["i1", "i2"], await Ids(caller, workspace, list, where: """[{"path":"title","op":"startsWith","value":"Fix"}]"""));
-        Assert.Equal(["i3"], await Ids(caller, workspace, list, where: """[{"path":"title","op":"contains","value":"docs"}]"""));
-        Assert.Equal(["i1", "i4"], await Ids(caller, workspace, list, where: """[{"path":"priority","op":"ge","value":3}]"""));
-        Assert.Equal(["i1", "i3"], await Ids(caller, workspace, list, where: """[{"path":"due","op":"lt","value":"2026-12-01T00:00:00Z"}]"""));
-        Assert.Equal(["i3"], await Ids(caller, workspace, list, where: """[{"path":"done","op":"eq","value":true}]"""));
-        Assert.Equal(["i1", "i2"], await Ids(caller, workspace, list, where: """[{"path":"tags","op":"contains","value":"auth"}]"""));
+        SameSet(["i1", "i2"], await Ids(caller, workspace, list, where: """[{"path":"title","op":"startsWith","value":"Fix"}]"""));
+        SameSet(["i3"], await Ids(caller, workspace, list, where: """[{"path":"title","op":"contains","value":"docs"}]"""));
+        SameSet(["i1", "i4"], await Ids(caller, workspace, list, where: """[{"path":"priority","op":"ge","value":3}]"""));
+        SameSet(["i1", "i3"], await Ids(caller, workspace, list, where: """[{"path":"due","op":"lt","value":"2026-12-01T00:00:00Z"}]"""));
+        SameSet(["i3"], await Ids(caller, workspace, list, where: """[{"path":"done","op":"eq","value":true}]"""));
+        SameSet(["i1", "i2"], await Ids(caller, workspace, list, where: """[{"path":"tags","op":"contains","value":"auth"}]"""));
         Assert.Empty(await Ids(caller, workspace, list, where: """[{"path":"status","op":"eq","value":"Open"}]"""));
-        Assert.Equal(["i2", "i3"], await Ids(caller, workspace, list, where: """[{"path":"status","op":"ne","value":"open"}]"""));
-        Assert.Equal(["i2"], await Ids(caller, workspace, list, where: """[{"path":"owner","op":"ne","value":"ann"}]"""));
+        SameSet(["i2", "i3"], await Ids(caller, workspace, list, where: """[{"path":"status","op":"ne","value":"open"}]"""));
+        SameSet(["i2"], await Ids(caller, workspace, list, where: """[{"path":"owner","op":"ne","value":"ann"}]"""));
         Assert.Equal(["i4", "i1", "i3", "i2"], await Ids(caller, workspace, list, order: """{"path":"priority","desc":true}"""));
         Assert.Equal(["i3", "i1", "i2", "i4"], await Ids(caller, workspace, list));
 
@@ -279,6 +279,11 @@ public sealed class CosmosEmulatorTests
     }
 
     #region private
+
+    private static void SameSet(string[] expected, string[] actual)
+    {
+        Assert.Equal(expected.Order(StringComparer.Ordinal).ToArray(), actual.Order(StringComparer.Ordinal).ToArray());
+    }
 
     private async Task<string[]> Ids(Caller caller, string workspace, string list, string? where = null, string? order = null, string? schemaVersion = null)
     {

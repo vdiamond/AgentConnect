@@ -140,21 +140,40 @@ public static class ItemIdRules
     /// <returns><see langword="true"/> when the id is allowed.</returns>
     public static bool IsValid(string? itemId)
     {
-        if (string.IsNullOrEmpty(itemId) || itemId.Length > 255)
+        if (string.IsNullOrEmpty(itemId) || itemId.Length > 255 || ContainsForbidden(itemId))
         {
             return false;
         }
 
+        string decoded;
+        try
+        {
+            decoded = Uri.UnescapeDataString(itemId);
+        }
+        catch (UriFormatException)
+        {
+            return true;
+        }
+
+        return !ContainsForbidden(decoded);
+    }
+
+    #region private
+
+    private static bool ContainsForbidden(string itemId)
+    {
         foreach (var character in itemId)
         {
             if (character is '/' or '\\' or '?' or '#')
             {
-                return false;
+                return true;
             }
         }
 
-        return true;
+        return false;
     }
+
+    #endregion
 }
 
 /// <summary>

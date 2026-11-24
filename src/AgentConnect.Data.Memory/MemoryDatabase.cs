@@ -333,6 +333,11 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     /// <inheritdoc />
     public Task UpsertAsync(ItemDocument item, CancellationToken cancellationToken)
     {
+        if (!ItemIdRules.IsValid(item.Id))
+        {
+            throw new ArgumentException("itemId: invalid");
+        }
+
         ThrowFault();
         lock (_gate)
         {

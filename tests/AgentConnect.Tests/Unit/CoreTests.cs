@@ -59,7 +59,19 @@ public sealed class CoreTests
     public void ItemIdRules_RejectsSlash()
     {
         Assert.False(ItemIdRules.IsValid("a/b"));
+        Assert.False(ItemIdRules.IsValid("a\\b"));
+        Assert.False(ItemIdRules.IsValid("a?b"));
+        Assert.False(ItemIdRules.IsValid("a#b"));
+        Assert.False(ItemIdRules.IsValid("a%2Fb"));
+        Assert.False(ItemIdRules.IsValid("a%2fb"));
+        Assert.False(ItemIdRules.IsValid("a%5Cb"));
+        Assert.False(ItemIdRules.IsValid("a%3Fb"));
+        Assert.False(ItemIdRules.IsValid("a%23b"));
         Assert.True(ItemIdRules.IsValid("task-1"));
+        Assert.True(ItemIdRules.IsValid("a%b"));
+        Assert.True(ItemIdRules.IsValid("a%25b"));
+        Assert.True(ItemIdRules.IsValid("50%"));
+        Assert.True(ItemIdRules.IsValid("a+b"));
     }
 
     [Theory]
@@ -185,6 +197,11 @@ public sealed class CoreTests
         Assert.IsType<StorageThrottleException>(mapped);
         Assert.IsType<StorageTooLargeException>(CosmosErrors.MapWrite(new CosmosException("big", HttpStatusCode.RequestEntityTooLarge, 0, "act", 1)));
         Assert.IsType<StorageLimitException>(CosmosErrors.MapWrite(new CosmosException("full", HttpStatusCode.Forbidden, CosmosErrors.PartitionKeyQuotaOverLimit, "act", 1)));
+        Assert.IsType<StorageThrottleException>(CosmosErrors.MapWrite(new CosmosException("timeout", HttpStatusCode.RequestTimeout, 0, "act", 1)));
+        Assert.IsType<StorageThrottleException>(CosmosErrors.MapWrite(new CosmosException("unavailable", HttpStatusCode.ServiceUnavailable, 0, "act", 1)));
+        var unexpected = CosmosErrors.MapWrite(new CosmosException("signing", HttpStatusCode.Unauthorized, 0, "act", 1));
+        var throttle = Assert.IsType<StorageThrottleException>(unexpected);
+        Assert.DoesNotContain("signing", throttle.Message, StringComparison.Ordinal);
     }
 
     [Fact]
