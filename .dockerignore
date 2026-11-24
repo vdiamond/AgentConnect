@@ -1,0 +1,17 @@
+.git
+**/.git
+**/.gitignore
+**/.gitmodules
+**/.vs
+**/.idea
+**/.vscode
+**/.cursor
+**/bin
+**/obj
+**/TestResults
+**/*.user
+**/*.suo
+tests
+external/EasyJsonSchema/tests
+docs
+**/*.md
