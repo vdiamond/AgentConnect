@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>AgentConnect</RootNamespace>
+    <AssemblyName>AgentConnect.Application</AssemblyName>
+    <Description>Shared AgentConnect application services used by the REST API and the MCP Server.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AgentConnect.Core\AgentConnect.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+  </ItemGroup>
+</Project>

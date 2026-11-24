@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>AgentConnect</RootNamespace>
+    <AssemblyName>AgentConnect.Core</AssemblyName>
+    <Description>Shared AgentConnect models, permissions, validation, paging, and error mapping.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\external\EasyJsonSchema\src\EasyJsonSchema\EasyJsonSchema.csproj" />
+  </ItemGroup>
+</Project>

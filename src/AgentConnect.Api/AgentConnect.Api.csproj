@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>AgentConnect</RootNamespace>
+    <AssemblyName>AgentConnect.Api</AssemblyName>
+    <Description>AgentConnect REST API.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AgentConnect.Composition\AgentConnect.Composition.csproj" />
+  </ItemGroup>
+</Project>

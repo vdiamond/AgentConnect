@@ -1,0 +1,3 @@
+[submodule "external/EasyJsonSchema"]
+	path = external/EasyJsonSchema
+	url = https://github.com/vdiamond/EasyJsonSchema.git

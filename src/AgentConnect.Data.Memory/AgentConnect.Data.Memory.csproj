@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>AgentConnect</RootNamespace>
+    <AssemblyName>AgentConnect.Data.Memory</AssemblyName>
+    <Description>In-memory AgentConnect data store used when Cosmos DB is not configured.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AgentConnect.Core\AgentConnect.Core.csproj" />
+  </ItemGroup>
+</Project>

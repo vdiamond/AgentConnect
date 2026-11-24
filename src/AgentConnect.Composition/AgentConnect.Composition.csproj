@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>AgentConnect</RootNamespace>
+    <AssemblyName>AgentConnect.Composition</AssemblyName>
+    <Description>Wires the shared AgentConnect services for the REST API, MCP Server, and deletion job.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AgentConnect.Application\AgentConnect.Application.csproj" />
+    <ProjectReference Include="..\AgentConnect.Data.Memory\AgentConnect.Data.Memory.csproj" />
+    <ProjectReference Include="..\AgentConnect.Data.Cosmos\AgentConnect.Data.Cosmos.csproj" />
+    <ProjectReference Include="..\AgentConnect.Email\AgentConnect.Email.csproj" />
+    <ProjectReference Include="..\AgentConnect.Audit\AgentConnect.Audit.csproj" />
+  </ItemGroup>
+</Project>
