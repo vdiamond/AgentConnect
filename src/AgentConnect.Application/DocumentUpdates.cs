@@ -1,0 +1,75 @@
+namespace AgentConnect;
+
+/// <summary>
+/// Re-reads a document and applies one mutation until the etag matches.
+/// A stale snapshot is never written back over a newer token, role, or schema version.
+/// </summary>
+public static class DocumentUpdates
+{
+    /// <summary>
+    /// Applies <paramref name="mutate"/> to the current document and replaces it.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="read">Reads the current document.</param>
+    /// <param name="replace">Replaces it with <c>If-Match</c>.</param>
+    /// <param name="mutate">The change to apply to the fresh document.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The document that was stored.</returns>
+    public static async Task<T> UpdateAsync<T>(
+        Func<CancellationToken, Task<T?>> read,
+        Func<T, CancellationToken, Task> replace,
+        Action<T> mutate,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        ArgumentNullException.ThrowIfNull(replace);
+        ArgumentNullException.ThrowIfNull(mutate);
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            var current = await read(cancellationToken).ConfigureAwait(false);
+            if (current is null)
+            {
+                throw new InvalidOperationException("The document is no longer stored.");
+            }
+
+            mutate(current);
+            try
+            {
+                await replace(current, cancellationToken).ConfigureAwait(false);
+                return current;
+            }
+            catch (StorageConflictException) when (attempt < 7)
+            {
+            }
+        }
+
+        throw new StorageConflictException();
+    }
+}
+
+/// <summary>
+/// Inserts a document and turns a unique-key conflict into the caller's 409 text.
+/// </summary>
+public static class Unique
+{
+    /// <summary>
+    /// Creates a document. A concurrent insert of the same email or name returns <paramref name="conflictText"/>.
+    /// </summary>
+    /// <param name="create">The insert.</param>
+    /// <param name="conflictText">The 409 text.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The conflict, or null when the insert succeeded.</returns>
+    public static async Task<PlatformError?> CreateAsync(Func<CancellationToken, Task> create, string conflictText, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(create);
+        try
+        {
+            await create(cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+        catch (DuplicateValueException)
+        {
+            return PlatformError.Conflict(conflictText);
+        }
+    }
+}

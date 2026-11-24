@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>AgentConnect.Tests</RootNamespace>
+    <AssemblyName>AgentConnect.Tests</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.12.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.15" />
+    <PackageReference Include="ModelContextProtocol" Version="2.4.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AgentConnect.Application\AgentConnect.Application.csproj" />
+    <ProjectReference Include="..\..\src\AgentConnect.Data.Memory\AgentConnect.Data.Memory.csproj" />
+    <ProjectReference Include="..\..\src\AgentConnect.Data.Cosmos\AgentConnect.Data.Cosmos.csproj" />
+    <ProjectReference Include="..\..\src\AgentConnect.Audit\AgentConnect.Audit.csproj" />
+    <ProjectReference Include="..\..\src\AgentConnect.Api\AgentConnect.Api.csproj" Aliases="ApiHost" />
+    <ProjectReference Include="..\..\src\AgentConnect.Mcp\AgentConnect.Mcp.csproj" Aliases="McpHost" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+</Project>

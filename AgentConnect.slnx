@@ -1,0 +1,22 @@
+<Solution>
+  <Folder Name="/external/" />
+  <Folder Name="/external/EasyJsonSchema/" />
+  <Folder Name="/external/EasyJsonSchema/src/">
+    <Project Path="external/EasyJsonSchema/src/EasyJsonSchema/EasyJsonSchema.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/AgentConnect.Api/AgentConnect.Api.csproj" />
+    <Project Path="src/AgentConnect.Application/AgentConnect.Application.csproj" />
+    <Project Path="src/AgentConnect.Audit/AgentConnect.Audit.csproj" />
+    <Project Path="src/AgentConnect.Composition/AgentConnect.Composition.csproj" />
+    <Project Path="src/AgentConnect.Core/AgentConnect.Core.csproj" />
+    <Project Path="src/AgentConnect.Data.Cosmos/AgentConnect.Data.Cosmos.csproj" />
+    <Project Path="src/AgentConnect.Data.Memory/AgentConnect.Data.Memory.csproj" />
+    <Project Path="src/AgentConnect.DeletionJob/AgentConnect.DeletionJob.csproj" />
+    <Project Path="src/AgentConnect.Email/AgentConnect.Email.csproj" />
+    <Project Path="src/AgentConnect.Mcp/AgentConnect.Mcp.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/AgentConnect.Tests/AgentConnect.Tests.csproj" />
+  </Folder>
+</Solution>
