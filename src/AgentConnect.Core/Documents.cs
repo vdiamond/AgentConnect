@@ -45,6 +45,7 @@ public sealed class TenantDocument : IConcurrencyDocument
     /// <summary>
     /// Gets or sets subscription info. Billing is out of scope; the field is stored as JSON null until its shape is defined.
     /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
     public object? Subscription { get; set; }
 
     /// <inheritdoc />
@@ -68,7 +69,7 @@ public sealed class MemberDocument : IConcurrencyDocument
     public string Email { get; set; } = "";
 
     /// <summary>Gets or sets the lowercase email used as the unique key inside a tenant.</summary>
-    public string EmailKey { get; set; } = "";
+    public string EmailLower { get; set; } = "";
 
     /// <summary>Gets or sets the secure hash of the token secret.</summary>
     public string TokenHash { get; set; } = "";
@@ -94,10 +95,10 @@ public sealed class MemberDocument : IConcurrencyDocument
     /// <summary>Gets or sets when an email last contained the token, in UTC.</summary>
     public DateTimeOffset? LastTokenSent { get; set; }
 
-    /// <summary>Sets <see cref="EmailKey"/> from <see cref="Email"/>.</summary>
+    /// <summary>Sets <see cref="EmailLower"/> from <see cref="Email"/>.</summary>
     public void StampKey()
     {
-        EmailKey = Email.ToLowerInvariant();
+        EmailLower = Email.ToLowerInvariant();
     }
 
     /// <inheritdoc />

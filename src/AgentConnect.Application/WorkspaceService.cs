@@ -14,16 +14,19 @@ public sealed class WorkspaceService
     /// <param name="members">The membership service.</param>
     /// <param name="audit">The audit recorder.</param>
     /// <param name="clock">The clock.</param>
-    public WorkspaceService(IWorkspaceRepository workspaces, MemberService members, IAuditRecorder audit, IClock clock)
+    /// <param name="options">The platform options.</param>
+    public WorkspaceService(IWorkspaceRepository workspaces, MemberService members, IAuditRecorder audit, IClock clock, AgentConnectOptions options)
     {
         ArgumentNullException.ThrowIfNull(workspaces);
         ArgumentNullException.ThrowIfNull(members);
         ArgumentNullException.ThrowIfNull(audit);
         ArgumentNullException.ThrowIfNull(clock);
+        ArgumentNullException.ThrowIfNull(options);
         _workspaces = workspaces;
         _members = members;
         _audit = audit;
         _clock = clock;
+        _options = options;
     }
 
     /// <summary>Creates a workspace and optional initial roles. FR-15.</summary>
@@ -46,6 +49,11 @@ public sealed class WorkspaceService
         if (denied is not null)
         {
             return OperationResult<WorkspaceCreatedResult>.Fail(denied);
+        }
+
+        if (name is null)
+        {
+            return OperationResult<WorkspaceCreatedResult>.Fail(PlatformError.BadRequest("name: required"));
         }
 
         if (!NameRules.TryNormalizeName(name, out var workspaceName, out var nameError))
@@ -118,6 +126,11 @@ public sealed class WorkspaceService
     /// <returns>The confirmation.</returns>
     public async Task<OperationResult<DeletedResult>> DeleteAsync(Caller caller, string workspaceId, CancellationToken cancellationToken)
     {
+        if (string.IsNullOrWhiteSpace(workspaceId))
+        {
+            return OperationResult<DeletedResult>.Fail(PlatformError.NotFound);
+        }
+
         var workspace = await _workspaces.GetAsync(caller.Tenant.Id, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace is null || workspace.DeletedAt is not null)
         {
@@ -140,6 +153,7 @@ public sealed class WorkspaceService
                 current.DeletedAt = _clock.UtcNow;
                 current.Updated = current.DeletedAt.Value;
             },
+            _options.ConcurrencyRetries,
             cancellationToken).ConfigureAwait(false);
         Record(caller.Member.Id, AuditActions.WorkspaceDeleted, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
@@ -186,9 +200,15 @@ public sealed class WorkspaceService
     /// <param name="name">The name field.</param>
     /// <param name="description">The description field.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The workspace.</returns>
-    public async Task<OperationResult<WorkspaceUpdatedResult>> UpdateAsync(Caller caller, string workspaceId, OptionalText name, OptionalText description, CancellationToken cancellationToken)
+    public async Task<OperationResult<WorkspaceUpdatedResult>> UpdateAsync(Caller caller, string workspaceId, OptionalText name, OptionalText description, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
     {
+        if (string.IsNullOrWhiteSpace(workspaceId))
+        {
+            return OperationResult<WorkspaceUpdatedResult>.Fail(PlatformError.NotFound);
+        }
+
         var workspace = await _workspaces.GetAsync(caller.Tenant.Id, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace is null || workspace.DeletedAt is not null || !caller.CanSee(workspaceId))
         {
@@ -199,6 +219,11 @@ public sealed class WorkspaceService
         if (denied is not null)
         {
             return OperationResult<WorkspaceUpdatedResult>.Fail(denied);
+        }
+
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<WorkspaceUpdatedResult>.Fail(blocked);
         }
 
         var nextName = workspace.Name;
@@ -224,7 +249,7 @@ public sealed class WorkspaceService
             try
             {
                 workspace = await DocumentUpdates.UpdateAsync(
-                    ct => _workspaces.GetAsync(caller.Tenant.Id, workspaceId, ct),
+                    ct => DocumentUpdates.LiveAsync(token => _workspaces.GetAsync(caller.Tenant.Id, workspaceId, token), current => current.DeletedAt, ct),
                     (current, ct) => _workspaces.ReplaceAsync(current, ct),
                     current =>
                     {
@@ -232,6 +257,7 @@ public sealed class WorkspaceService
                         current.Description = nextDescription;
                         current.Updated = _clock.UtcNow;
                     },
+                    _options.ConcurrencyRetries,
                     cancellationToken).ConfigureAwait(false);
             }
             catch (DuplicateValueException)
@@ -267,6 +293,7 @@ public sealed class WorkspaceService
     private readonly MemberService _members;
     private readonly IAuditRecorder _audit;
     private readonly IClock _clock;
+    private readonly AgentConnectOptions _options;
 
     private void Record(string actor, string action, params (string Key, string Value)[] targets)
     {

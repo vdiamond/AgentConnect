@@ -11,6 +11,16 @@ public static class PlatformSupport
     public const string PlatformOperator = "platform-operator";
 
     /// <summary>
+    /// Runs a check that belongs after access has been allowed. MCP uses it for unknown arguments.
+    /// </summary>
+    /// <param name="afterGate">The check, or null.</param>
+    /// <returns>The error, or null.</returns>
+    public static PlatformError? AfterGate(Func<PlatformError?>? afterGate)
+    {
+        return afterGate?.Invoke();
+    }
+
+    /// <summary>
     /// Resolves the page size and store cursor for a list call.
     /// </summary>
     /// <param name="tenant">The tenant.</param>

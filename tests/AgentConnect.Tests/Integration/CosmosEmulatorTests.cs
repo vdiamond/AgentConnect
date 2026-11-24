@@ -392,8 +392,8 @@ public sealed class CosmosPlatform : IAsyncLifetime
         var tokens = new TokenService(options.TokenEncryptionKey);
         Members = new MemberService(database, database, tokens, email, audit, _clock, options, NullLogger<MemberService>.Instance);
         Tenants = new TenantService(database, database, tokens, email, audit, _clock, options, NullLogger<TenantService>.Instance);
-        Workspaces = new WorkspaceService(database, Members, audit, _clock);
-        Content = new ContentService(database, database, database, new SchemaGateway(new EasyJsonSchema.EasyJsonSchemaService()), audit, _clock);
+        Workspaces = new WorkspaceService(database, Members, audit, _clock, options);
+        Content = new ContentService(database, database, database, new SchemaGateway(new EasyJsonSchema.EasyJsonSchemaService()), audit, _clock, options);
         Deletion = new DeletionService(database, options, NullLogger<DeletionService>.Instance);
     }
 

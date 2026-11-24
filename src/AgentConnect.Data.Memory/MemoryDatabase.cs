@@ -13,6 +13,15 @@ public enum ItemWriteFault
     /// <summary>Cosmos DB throttling.</summary>
     Throttled,
 
+    /// <summary>A request timeout, returned as 503.</summary>
+    TimedOut,
+
+    /// <summary>Cosmos DB is unavailable, returned as 503.</summary>
+    Unavailable,
+
+    /// <summary>An unexpected storage failure, returned as 500.</summary>
+    Unexpected,
+
     /// <summary>The list partition is full.</summary>
     PartitionFull,
 
@@ -28,8 +37,26 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     /// <summary>Gets or sets a fault thrown by the next item write.</summary>
     public ItemWriteFault WriteFault { get; set; }
 
-    /// <summary>Gets or sets the Retry-After value used for <see cref="ItemWriteFault.Throttled"/>.</summary>
+    /// <summary>Gets or sets a fault thrown by the next workspace read. Tests use it for the access gate.</summary>
+    public ItemWriteFault ReadFault { get; set; }
+
+    /// <summary>Gets or sets the Retry-After value used for throttled and unavailable writes.</summary>
     public TimeSpan ThrottleRetryAfter { get; set; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>Gets or sets how many of the next document replacements fail as a stale etag. FR-53.</summary>
+    public int ReplaceConflictsRemaining { get; set; }
+
+    /// <summary>Removes a list document so an in-flight update observes the delete. FR-51.</summary>
+    /// <param name="tenantId">The tenant id.</param>
+    /// <param name="workspaceId">The workspace id.</param>
+    /// <param name="listId">The list id.</param>
+    public void ForgetList(string tenantId, string workspaceId, string listId)
+    {
+        lock (_gate)
+        {
+            _lists.Remove(Key(tenantId, workspaceId, listId));
+        }
+    }
 
     /// <summary>
     /// Runs after a list is read and before the clone is returned.
@@ -37,12 +64,25 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     /// </summary>
     public Action? AfterListRead { get; set; }
 
+    /// <summary>Runs after a workspace is read and before the clone is returned.</summary>
+    public Action? AfterWorkspaceRead { get; set; }
+
+    /// <summary>Runs after a tenant is read and before the clone is returned.</summary>
+    public Action? AfterTenantRead { get; set; }
+
     /// <inheritdoc />
     public Task<TenantDocument?> GetAsync(string id, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
-            return Task.FromResult(_tenants.TryGetValue(id, out var tenant) ? Clone(tenant) : null);
+            if (!_tenants.TryGetValue(id, out var tenant))
+            {
+                return Task.FromResult<TenantDocument?>(null);
+            }
+
+            var clone = Clone(tenant);
+            AfterTenantRead?.Invoke();
+            return Task.FromResult<TenantDocument?>(clone);
         }
     }
 
@@ -111,7 +151,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         lock (_gate)
         {
             member.StampKey();
-            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailKey == member.EmailKey))
+            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailLower == member.EmailLower))
             {
                 throw new DuplicateValueException();
             }
@@ -128,7 +168,7 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         lock (_gate)
         {
             member.StampKey();
-            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailKey == member.EmailKey))
+            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailLower == member.EmailLower))
             {
                 throw new DuplicateValueException();
             }
@@ -169,10 +209,10 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         lock (_gate)
         {
             var ordered = _members.Values.Where(member => member.TenantId == tenantId && member.WorkspaceRoles.ContainsKey(workspaceId))
-                .OrderBy(member => member.Email, StringComparer.Ordinal)
+                .OrderBy(member => member.EmailLower, StringComparer.Ordinal)
                 .ThenBy(member => member.Id, StringComparer.Ordinal)
                 .ToList();
-            return Task.FromResult(Page(ordered, pageSize, cursor, member => (0, member.Email + "\n" + member.Id), Clone));
+            return Task.FromResult(Page(ordered, pageSize, cursor, member => (0, member.EmailLower + "\n" + member.Id), Clone));
         }
     }
 
@@ -181,7 +221,15 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            return Task.FromResult(_workspaces.TryGetValue(Key(tenantId, workspaceId), out var workspace) ? Clone(workspace) : null);
+            ThrowReadFault();
+            if (!_workspaces.TryGetValue(Key(tenantId, workspaceId), out var workspace))
+            {
+                return Task.FromResult<WorkspaceDocument?>(null);
+            }
+
+            var clone = Clone(workspace);
+            AfterWorkspaceRead?.Invoke();
+            return Task.FromResult<WorkspaceDocument?>(clone);
         }
     }
 
@@ -407,15 +455,36 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     private readonly Dictionary<string, ListDocument> _lists = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ItemDocument> _items = new(StringComparer.Ordinal);
 
+    private void ThrowReadFault()
+    {
+        var fault = ReadFault;
+        ReadFault = ItemWriteFault.None;
+        Throw(fault);
+    }
+
     private void ThrowFault()
     {
         var fault = WriteFault;
         WriteFault = ItemWriteFault.None;
+        Throw(fault);
+    }
+
+    private void Throw(ItemWriteFault fault)
+    {
         switch (fault)
         {
             case ItemWriteFault.Throttled:
             {
                 throw new StorageThrottleException(ThrottleRetryAfter);
+            }
+            case ItemWriteFault.TimedOut:
+            case ItemWriteFault.Unavailable:
+            {
+                throw new StorageUnavailableException(ThrottleRetryAfter);
+            }
+            case ItemWriteFault.Unexpected:
+            {
+                throw new StorageFailureException(500, 0, "activity-9");
             }
             case ItemWriteFault.PartitionFull:
             {
@@ -665,10 +734,21 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         store[key] = Clone(incoming);
     }
 
-    private static void Replace<T>(Dictionary<string, T> store, string key, T incoming)
+    private void Replace<T>(Dictionary<string, T> store, string key, T incoming)
         where T : IConcurrencyDocument
     {
-        if (!store.TryGetValue(key, out var stored) || !string.Equals(stored.ETag, incoming.ETag, StringComparison.Ordinal))
+        if (!store.TryGetValue(key, out var stored))
+        {
+            throw new DocumentMissingException();
+        }
+
+        if (ReplaceConflictsRemaining > 0)
+        {
+            ReplaceConflictsRemaining--;
+            throw new StorageConflictException();
+        }
+
+        if (!string.Equals(stored.ETag, incoming.ETag, StringComparison.Ordinal))
         {
             throw new StorageConflictException();
         }

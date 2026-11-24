@@ -55,9 +55,19 @@ public sealed class TenantService
     /// <returns>The tenant, or an error.</returns>
     public async Task<OperationResult<TenantCreatedResult>> CreateAsync(string? name, string? email, CancellationToken cancellationToken)
     {
+        if (name is null)
+        {
+            return OperationResult<TenantCreatedResult>.Fail(PlatformError.BadRequest("name: required"));
+        }
+
         if (!NameRules.TryNormalizeName(name, out var tenantName, out var nameError))
         {
             return OperationResult<TenantCreatedResult>.Fail(PlatformError.BadRequest(nameError));
+        }
+
+        if (email is null)
+        {
+            return OperationResult<TenantCreatedResult>.Fail(PlatformError.BadRequest("email: required"));
         }
 
         if (!EmailRules.TryNormalize(email, out var ownerEmail, out var emailError))
@@ -157,6 +167,7 @@ public sealed class TenantService
             {
                 current.DeletedAt = _clock.UtcNow;
             },
+            _options.ConcurrencyRetries,
             cancellationToken).ConfigureAwait(false);
         Audit(PlatformSupport.PlatformOperator, AuditActions.TenantDeleted, ("tenantId", tenant.Id));
         return OperationResult<DeletedResult>.Ok(new DeletedResult(true));
@@ -208,13 +219,14 @@ public sealed class TenantService
         if (nextDefault != caller.Tenant.PageSizeDefault || nextMax != caller.Tenant.PageSizeMax)
         {
             await DocumentUpdates.UpdateAsync(
-                ct => _tenants.GetAsync(caller.Tenant.Id, ct),
+                ct => DocumentUpdates.LiveAsync(token => _tenants.GetAsync(caller.Tenant.Id, token), current => current.DeletedAt, ct),
                 (current, ct) => _tenants.ReplaceAsync(current, ct),
                 current =>
                 {
                     current.PageSizeDefault = nextDefault;
                     current.PageSizeMax = nextMax;
                 },
+                _options.ConcurrencyRetries,
                 cancellationToken).ConfigureAwait(false);
             caller.Tenant.PageSizeDefault = nextDefault;
             caller.Tenant.PageSizeMax = nextMax;
@@ -281,6 +293,7 @@ public sealed class TenantService
                 current.InvitationSent = true;
                 current.LastTokenSent = PlatformSupport.After(_clock.UtcNow, current.LastTokenIssued);
             },
+            _options.ConcurrencyRetries,
             cancellationToken).ConfigureAwait(false);
         Audit(invitedBy == "AgentConnect" ? PlatformSupport.PlatformOperator : invitedBy, AuditActions.InvitationSent, ("tenantId", tenant.Id), ("memberId", member.Id));
         return true;
@@ -317,6 +330,7 @@ public sealed class TenantService
                         current.Status = status;
                     }
                 },
+                _options.ConcurrencyRetries,
                 cancellationToken).ConfigureAwait(false);
             Audit(PlatformSupport.PlatformOperator, action, ("tenantId", tenant.Value.Id));
         }

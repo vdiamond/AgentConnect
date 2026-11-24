@@ -38,6 +38,31 @@ public sealed class SystemClock : IClock
 }
 
 /// <summary>
+/// Cosmos DB returned 408 or 503. The caller can retry.
+/// </summary>
+public sealed class StorageUnavailableException : Exception
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="StorageUnavailableException"/> class.
+    /// </summary>
+    /// <param name="retryAfter">The Retry-After value, or one second when Cosmos DB did not send one.</param>
+    public StorageUnavailableException(TimeSpan retryAfter)
+    {
+        RetryAfter = retryAfter;
+    }
+
+    /// <summary>Gets the Retry-After value.</summary>
+    public TimeSpan RetryAfter { get; }
+}
+
+/// <summary>
+/// A document disappeared while it was being updated.
+/// </summary>
+public sealed class DocumentMissingException : Exception
+{
+}
+
+/// <summary>
 /// Cosmos DB rejected the request because the caller is over the provisioned throughput.
 /// </summary>
 public sealed class StorageThrottleException : Exception
@@ -382,6 +407,9 @@ public sealed class AgentConnectOptions
 
     /// <summary>Gets or sets how many documents one deletion batch removes.</summary>
     public int DeletionBatchSize { get; set; } = 100;
+
+    /// <summary>Gets or sets how many times a stale Tenant, Member, Workspace or List write is retried. FR-53.</summary>
+    public int ConcurrencyRetries { get; set; } = 3;
 
     /// <summary>Gets or sets email settings.</summary>
     public EmailOptions Email { get; set; } = new();

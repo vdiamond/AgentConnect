@@ -179,7 +179,7 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
     /// <inheritdoc />
     public Task<ResultPage<MemberDocument>> ListByWorkspaceAsync(string tenantId, string workspaceId, int pageSize, string? cursor, CancellationToken cancellationToken)
     {
-        var query = new QueryDefinition("SELECT * FROM c WHERE IS_DEFINED(c.workspaceRoles[\"" + QuoteId(workspaceId) + "\"]) ORDER BY c.email ASC, c.id ASC");
+        var query = new QueryDefinition("SELECT * FROM c WHERE IS_DEFINED(c.workspaceRoles[\"" + QuoteId(workspaceId) + "\"]) ORDER BY c.emailLower ASC, c.id ASC");
         return QueryAsync<MemberDocument>(Members, query, new PartitionKey(tenantId), pageSize, cursor, cancellationToken);
     }
 
@@ -348,8 +348,8 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
 
         var database = await _client.CreateDatabaseIfNotExistsAsync(_options.Database, cancellationToken: cancellationToken).ConfigureAwait(false);
         await CreateContainerAsync(database.Database, _options.TenantContainer, ["/id"], [], null, cancellationToken).ConfigureAwait(false);
-        await CreateContainerAsync(database.Database, _options.MemberContainer, ["/tenantId"], ["/created", "/id"], "/emailKey", cancellationToken).ConfigureAwait(false);
-        await AddCompositeAsync(database.Database, _options.MemberContainer, ["/email", "/id"], cancellationToken).ConfigureAwait(false);
+        await CreateContainerAsync(database.Database, _options.MemberContainer, ["/tenantId"], ["/created", "/id"], "/emailLower", cancellationToken).ConfigureAwait(false);
+        await AddCompositeAsync(database.Database, _options.MemberContainer, ["/emailLower", "/id"], cancellationToken).ConfigureAwait(false);
         await CreateContainerAsync(database.Database, _options.WorkspaceContainer, ["/tenantId"], ["/updated", "/id"], "/nameKey", cancellationToken).ConfigureAwait(false);
         await CreateContainerAsync(database.Database, _options.ListContainer, ["/tenantId", "/workspaceId"], ["/updated", "/id"], "/nameKey", cancellationToken).ConfigureAwait(false);
         await CreateContainerAsync(database.Database, _options.ItemContainer, ["/tenantId", "/workspaceId", "/listId"], ["/updated", "/id"], null, cancellationToken).ConfigureAwait(false);
@@ -440,6 +440,11 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
         {
             document.ETag = match;
             throw new StorageConflictException();
+        }
+        catch (CosmosException exception) when (exception.StatusCode == HttpStatusCode.NotFound)
+        {
+            document.ETag = match;
+            throw new DocumentMissingException();
         }
         catch (CosmosException exception)
         {

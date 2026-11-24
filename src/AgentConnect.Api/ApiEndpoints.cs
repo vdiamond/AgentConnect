@@ -24,6 +24,7 @@ public static class ApiEndpoints
         app.MapPatch("/tenant", PatchTenantAsync);
         app.MapPost("/members", AddMemberAsync);
         app.MapPost("/members/{email}/send-invitation", SendInvitationAsync);
+        app.MapPut("/members/{email}/tenant-owner", SetTenantOwnerAsync);
         app.MapDelete("/members/{email}", DeleteMemberAsync);
         app.MapPost("/members/{email}/token/regenerate", RegenerateAsync);
         app.MapPost("/members/{email}/token/send", SendTokenAsync);
@@ -63,7 +64,20 @@ public static class ApiEndpoints
             return;
         }
 
-        var result = await tenants.CreateAsync(Text(body, "name"), Text(body, "email"), http.RequestAborted).ConfigureAwait(false);
+        if (await UnknownAsync(http, body, "name", "email").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var name = RequiredName(body, out var nameError);
+        var email = MemberField(body, "email", "email: required", "email: invalid format", out var emailError);
+        if (nameError is not null || emailError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(nameError ?? emailError!)).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await tenants.CreateAsync(name, email, http.RequestAborted).ConfigureAwait(false);
         await WriteAsync(http, result).ConfigureAwait(false);
     }
 
@@ -172,12 +186,58 @@ public static class ApiEndpoints
             return;
         }
 
-        await WriteAsync(http, await members.AddAsync(Caller(http), Text(body, "email"), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        if (await UnknownAsync(http, body, "email").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var email = MemberField(body, "email", "email: required", "email: invalid format", out var emailError);
+        if (emailError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(emailError)).ConfigureAwait(false);
+            return;
+        }
+
+        await WriteAsync(http, await members.AddAsync(Caller(http), email, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
     }
 
     private static async Task SendInvitationAsync(HttpContext http, string email, MemberService members)
     {
         await WriteAsync(http, await members.SendInvitationAsync(Caller(http), email, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
+    private static async Task SetTenantOwnerAsync(HttpContext http, string email, MemberService members)
+    {
+        if (!Caller(http).IsTenantOwner)
+        {
+            await WriteErrorAsync(http, PlatformError.NotAllowed).ConfigureAwait(false);
+            return;
+        }
+
+        var parsed = await TryObjectAsync(http).ConfigureAwait(false);
+        if (parsed is not JsonElement body)
+        {
+            return;
+        }
+
+        if (await UnknownAsync(http, body, "isTenantOwner").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (!body.TryGetProperty("isTenantOwner", out var flag) || flag.ValueKind == JsonValueKind.Null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest("isTenantOwner: required")).ConfigureAwait(false);
+            return;
+        }
+
+        if (flag.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest("isTenantOwner: expected Boolean, found " + JsonKinds.Of(flag))).ConfigureAwait(false);
+            return;
+        }
+
+        await WriteAsync(http, await members.SetTenantOwnerAsync(Caller(http), email, flag.GetBoolean(), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
     }
 
     private static async Task DeleteMemberAsync(HttpContext http, string email, MemberService members)
@@ -214,8 +274,20 @@ public static class ApiEndpoints
             return;
         }
 
+        if (await UnknownAsync(http, body, "name", "description", "members").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var name = RequiredName(body, out var nameError);
+        if (nameError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(nameError)).ConfigureAwait(false);
+            return;
+        }
+
         var initial = new List<InitialRole>();
-        if (body.TryGetProperty("members", out var members))
+        if (body.TryGetProperty("members", out var members) && members.ValueKind != JsonValueKind.Null)
         {
             if (members.ValueKind != JsonValueKind.Array)
             {
@@ -225,11 +297,22 @@ public static class ApiEndpoints
 
             foreach (var entry in members.EnumerateArray())
             {
+                if (entry.ValueKind != JsonValueKind.Object)
+                {
+                    await WriteErrorAsync(http, PlatformError.BadRequest("members: expected Object, found " + JsonKinds.Of(entry))).ConfigureAwait(false);
+                    return;
+                }
+
+                if (await UnknownAsync(http, entry, "email", "role").ConfigureAwait(false))
+                {
+                    return;
+                }
+
                 initial.Add(new InitialRole(Text(entry, "email"), Text(entry, "role")));
             }
         }
 
-        var result = await workspaces.CreateAsync(Caller(http), Text(body, "name"), Text(body, "description"), body.TryGetProperty("description", out _), initial, http.RequestAborted).ConfigureAwait(false);
+        var result = await workspaces.CreateAsync(Caller(http), name, Text(body, "description"), body.TryGetProperty("description", out _) && body.GetProperty("description").ValueKind != JsonValueKind.Null, initial, http.RequestAborted).ConfigureAwait(false);
         await WriteAsync(http, result).ConfigureAwait(false);
     }
 
@@ -257,13 +340,18 @@ public static class ApiEndpoints
             return;
         }
 
-        if (StringFieldError(body, "name", "description") is string fieldError)
+        if (await UnknownAsync(http, body, "name", "description").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (PatchFieldError(body) is string fieldError)
         {
             await WriteErrorAsync(http, PlatformError.BadRequest(fieldError)).ConfigureAwait(false);
             return;
         }
 
-        var result = await workspaces.UpdateAsync(Caller(http), id, Optional(body, "name"), Optional(body, "description"), http.RequestAborted).ConfigureAwait(false);
+        var result = await workspaces.UpdateAsync(Caller(http), id, Optional(body, "name", false), Optional(body, "description", true), http.RequestAborted).ConfigureAwait(false);
         await WriteAsync(http, result).ConfigureAwait(false);
     }
 
@@ -286,7 +374,20 @@ public static class ApiEndpoints
             return;
         }
 
-        await WriteAsync(http, await members.AddToWorkspaceAsync(Caller(http), id, Text(body, "email"), Text(body, "role"), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        if (await UnknownAsync(http, body, "email", "role").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var email = MemberField(body, "email", "email: required", "email: invalid format", out var emailError);
+        var role = MemberField(body, "role", "role: required", "role: invalid", out var roleError);
+        if (emailError is not null || roleError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(emailError ?? roleError!)).ConfigureAwait(false);
+            return;
+        }
+
+        await WriteAsync(http, await members.AddToWorkspaceAsync(Caller(http), id, email, role, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
     }
 
     private static async Task RemoveWorkspaceMemberAsync(HttpContext http, string id, string email, MemberService members)
@@ -307,7 +408,19 @@ public static class ApiEndpoints
             return;
         }
 
-        await WriteAsync(http, await members.ChangeRoleAsync(Caller(http), id, email, Text(body, "role"), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        if (await UnknownAsync(http, body, "role").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var role = MemberField(body, "role", "role: required", "role: invalid", out var roleError);
+        if (roleError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(roleError)).ConfigureAwait(false);
+            return;
+        }
+
+        await WriteAsync(http, await members.ChangeRoleAsync(Caller(http), id, email, role, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
     }
 
     private static async Task CreateListAsync(HttpContext http, string id, ContentService content)
@@ -323,13 +436,25 @@ public static class ApiEndpoints
             return;
         }
 
+        if (await UnknownAsync(http, body, "name", "description", "schema").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var name = RequiredName(body, out var nameError);
+        if (nameError is not null)
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(nameError)).ConfigureAwait(false);
+            return;
+        }
+
         string? schema = null;
-        if (body.TryGetProperty("schema", out var schemaElement))
+        if (body.TryGetProperty("schema", out var schemaElement) && schemaElement.ValueKind != JsonValueKind.Null)
         {
             schema = schemaElement.GetRawText();
         }
 
-        var result = await content.CreateListAsync(Caller(http), id, Text(body, "name"), Text(body, "description"), body.TryGetProperty("description", out _), schema, http.RequestAborted).ConfigureAwait(false);
+        var result = await content.CreateListAsync(Caller(http), id, name, Text(body, "description"), body.TryGetProperty("description", out _) && body.GetProperty("description").ValueKind != JsonValueKind.Null, schema, http.RequestAborted).ConfigureAwait(false);
         await WriteAsync(http, result).ConfigureAwait(false);
     }
 
@@ -346,13 +471,18 @@ public static class ApiEndpoints
             return;
         }
 
-        if (StringFieldError(body, "name", "description") is string fieldError)
+        if (await UnknownAsync(http, body, "name", "description").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        if (PatchFieldError(body) is string fieldError)
         {
             await WriteErrorAsync(http, PlatformError.BadRequest(fieldError)).ConfigureAwait(false);
             return;
         }
 
-        await WriteAsync(http, await content.UpdateListAsync(Caller(http), id, listId, Optional(body, "name"), Optional(body, "description"), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        await WriteAsync(http, await content.UpdateListAsync(Caller(http), id, listId, Optional(body, "name", false), Optional(body, "description", true), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
     }
 
     private static async Task DeleteListAsync(HttpContext http, string id, string listId, ContentService content)
@@ -460,11 +590,16 @@ public static class ApiEndpoints
         return value.GetString();
     }
 
-    private static OptionalText Optional(JsonElement body, string name)
+    private static OptionalText Optional(JsonElement body, string name, bool clearOnNull)
     {
-        if (!body.TryGetProperty(name, out var value))
+        if (!body.TryGetProperty(name, out var value) || (value.ValueKind == JsonValueKind.Null && !clearOnNull))
         {
             return new OptionalText(false, null);
+        }
+
+        if (value.ValueKind == JsonValueKind.Null)
+        {
+            return new OptionalText(true, null);
         }
 
         if (value.ValueKind != JsonValueKind.String)
@@ -475,17 +610,67 @@ public static class ApiEndpoints
         return new OptionalText(true, value.GetString());
     }
 
-    private static string? StringFieldError(JsonElement body, params string[] names)
+    private static string? PatchFieldError(JsonElement body)
     {
-        foreach (var name in names)
+        if (body.TryGetProperty("name", out var name) && name.ValueKind != JsonValueKind.String)
         {
-            if (body.TryGetProperty(name, out var value) && value.ValueKind != JsonValueKind.String)
-            {
-                return name + ": expected String, found " + JsonKinds.Of(value);
-            }
+            return "name: expected String, found " + JsonKinds.Of(name);
+        }
+
+        if (body.TryGetProperty("description", out var description) && description.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+        {
+            return "description: expected String, found " + JsonKinds.Of(description);
         }
 
         return null;
+    }
+
+    private static string? RequiredName(JsonElement body, out string? error)
+    {
+        if (!body.TryGetProperty("name", out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            error = "name: required";
+            return null;
+        }
+
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            error = "name: expected String, found " + JsonKinds.Of(value);
+            return null;
+        }
+
+        error = null;
+        return value.GetString();
+    }
+
+    private static async Task<bool> UnknownAsync(HttpContext http, JsonElement body, params string[] allowed)
+    {
+        var name = Unknown(body, allowed);
+        if (name is null)
+        {
+            return false;
+        }
+
+        await WriteErrorAsync(http, PlatformError.BadRequest(name + ": unknown field")).ConfigureAwait(false);
+        return true;
+    }
+
+    private static string? MemberField(JsonElement body, string name, string missing, string wrongKind, out string? error)
+    {
+        if (!body.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
+        {
+            error = missing;
+            return null;
+        }
+
+        if (value.ValueKind != JsonValueKind.String)
+        {
+            error = wrongKind;
+            return null;
+        }
+
+        error = null;
+        return value.GetString();
     }
 
     private static async Task<bool> DeniedAsync(HttpContext http, PlatformError? error)
@@ -537,6 +722,11 @@ public static class ApiEndpoints
         }
 
         var text = http.Request.Query["pageSize"].ToString();
+        if (text == "null")
+        {
+            return (null, false);
+        }
+
         if (!int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var size))
         {
             return (0, true);
@@ -547,7 +737,13 @@ public static class ApiEndpoints
 
     private static string? Continuation(HttpContext http)
     {
-        return http.Request.Query.ContainsKey("continuation") ? http.Request.Query["continuation"].ToString() : null;
+        if (!http.Request.Query.ContainsKey("continuation"))
+        {
+            return null;
+        }
+
+        var text = http.Request.Query["continuation"].ToString();
+        return text == "null" ? null : text;
     }
 
     private static async Task WriteAsync<T>(HttpContext http, OperationResult<T> result)

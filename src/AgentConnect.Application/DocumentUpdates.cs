@@ -13,23 +13,30 @@ public static class DocumentUpdates
     /// <param name="read">Reads the current document.</param>
     /// <param name="replace">Replaces it with <c>If-Match</c>.</param>
     /// <param name="mutate">The change to apply to the fresh document.</param>
+    /// <param name="retries">How many times a stale write is tried again before <c>$: conflict</c>.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The document that was stored.</returns>
     public static async Task<T> UpdateAsync<T>(
         Func<CancellationToken, Task<T?>> read,
         Func<T, CancellationToken, Task> replace,
         Action<T> mutate,
+        int retries,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(read);
         ArgumentNullException.ThrowIfNull(replace);
         ArgumentNullException.ThrowIfNull(mutate);
-        for (var attempt = 0; attempt < 8; attempt++)
+        if (retries < 0)
+        {
+            retries = 0;
+        }
+
+        for (var attempt = 0; ; attempt++)
         {
             var current = await read(cancellationToken).ConfigureAwait(false);
             if (current is null)
             {
-                throw new InvalidOperationException("The document is no longer stored.");
+                throw new DocumentMissingException();
             }
 
             mutate(current);
@@ -38,12 +45,35 @@ public static class DocumentUpdates
                 await replace(current, cancellationToken).ConfigureAwait(false);
                 return current;
             }
-            catch (StorageConflictException) when (attempt < 7)
+            catch (StorageConflictException) when (attempt < retries)
             {
             }
         }
+    }
 
-        throw new StorageConflictException();
+    /// <summary>
+    /// Reads a document and treats a soft delete as gone. FR-51.
+    /// </summary>
+    /// <typeparam name="T">The document type.</typeparam>
+    /// <param name="read">Reads the current document.</param>
+    /// <param name="deletedAt">Reads <c>deletedAt</c>.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The live document, or null when it is missing or deleted.</returns>
+    public static async Task<T?> LiveAsync<T>(
+        Func<CancellationToken, Task<T?>> read,
+        Func<T, DateTimeOffset?> deletedAt,
+        CancellationToken cancellationToken)
+        where T : class
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        ArgumentNullException.ThrowIfNull(deletedAt);
+        var document = await read(cancellationToken).ConfigureAwait(false);
+        if (document is null || deletedAt(document) is not null)
+        {
+            return null;
+        }
+
+        return document;
     }
 }
 
