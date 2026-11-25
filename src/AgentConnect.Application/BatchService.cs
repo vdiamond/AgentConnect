@@ -78,6 +78,11 @@ public sealed class BatchService
         }
 
         var ops = parsed.Value!;
+        if (ParentIdError(ops[0]) is { } idError)
+        {
+            return OperationResult<BatchResult>.Fail(idError);
+        }
+
         var errors = new PlatformError?[ops.Count];
         var prepared = await PrepareAsync(caller, ops, errors, cancellationToken).ConfigureAwait(false);
         if (errors.Any(error => error is not null))
@@ -97,7 +102,13 @@ public sealed class BatchService
             {
                 try
                 {
-                    await RefreshAsync(caller, ops, prepared, cancellationToken).ConfigureAwait(false);
+                    var stale = await ApplyOnFreshAsync(caller, prepared, cancellationToken).ConfigureAwait(false);
+                    if (stale is int failed)
+                    {
+                        errors[failed] = PlatformError.NotFound;
+                        return OperationResult<BatchResult>.Ok(Results(errors, prepared));
+                    }
+
                     if (prepared.Changes.Count > 0)
                     {
                         await _store.CommitAsync(new BatchCommit { Container = ops[0].Type, Changes = prepared.Changes }, cancellationToken).ConfigureAwait(false);
@@ -593,6 +604,7 @@ public sealed class BatchService
             }
 
             prepared.Changes.Add(new BatchChange { Action = "delete", Member = existing });
+            prepared.Intents.Add(new Intent { Index = op.Index, Target = "member", Action = "delete", MemberId = existing.Id });
             prepared.Audits.Add(Audit(caller, AuditActions.MemberDeleted, ("tenantId", caller.Tenant.Id), ("memberId", existing.Id)));
             prepared.Bodies[op.Index] = Body(new DeletedResult(true));
             prepared.NoteWrite(op.Index);
@@ -612,6 +624,7 @@ public sealed class BatchService
         {
             existing.IsTenantOwner = op.Flag;
             prepared.Changes.Add(new BatchChange { Action = "replace", Member = existing });
+            prepared.Intents.Add(new Intent { Index = op.Index, Target = "member", Action = "replace", MemberId = existing.Id, Flag = op.Flag });
             prepared.Audits.Add(Audit(caller, AuditActions.TenantOwnerChanged, ("tenantId", caller.Tenant.Id), ("memberId", existing.Id)));
             prepared.NoteWrite(op.Index);
         }
@@ -678,6 +691,7 @@ public sealed class BatchService
             stored.DeletedAt = _clock.UtcNow;
             stored.Updated = stored.DeletedAt.Value;
             prepared.Changes.Add(new BatchChange { Action = "delete", Workspace = stored });
+            prepared.Intents.Add(new Intent { Index = op.Index, Target = "workspace", Action = "delete", WorkspaceId = stored.Id });
             prepared.Audits.Add(Audit(caller, AuditActions.WorkspaceDeleted, ("tenantId", caller.Tenant.Id), ("workspaceId", stored.Id)));
             prepared.Bodies[op.Index] = Body(new DeletedResult(true));
             prepared.NoteWrite(op.Index);
@@ -712,6 +726,17 @@ public sealed class BatchService
             stored.Description = nextDescription;
             stored.Updated = PlatformSupport.After(_clock.UtcNow, stored.Updated);
             prepared.Changes.Add(new BatchChange { Action = "replace", Workspace = stored });
+            prepared.Intents.Add(new Intent
+            {
+                Index = op.Index,
+                Target = "workspace",
+                Action = "replace",
+                WorkspaceId = stored.Id,
+                SetName = op.NameSpecified,
+                Name = nextName,
+                SetDescription = op.Description.Specified,
+                Description = nextDescription,
+            });
             prepared.Audits.Add(Audit(caller, AuditActions.WorkspaceUpdated, ("tenantId", caller.Tenant.Id), ("workspaceId", stored.Id)));
             prepared.NoteWrite(op.Index);
         }
@@ -801,6 +826,7 @@ public sealed class BatchService
             stored.DeletedAt = _clock.UtcNow;
             stored.Updated = stored.DeletedAt.Value;
             prepared.Changes.Add(new BatchChange { Action = "delete", List = stored });
+            prepared.Intents.Add(new Intent { Index = op.Index, Target = "list", Action = "delete", WorkspaceId = workspace.Id, ListId = stored.Id });
             prepared.Audits.Add(Audit(caller, AuditActions.ListDeleted, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id), ("listId", stored.Id)));
             prepared.Bodies[op.Index] = Body(new DeletedResult(true));
             prepared.NoteWrite(op.Index);
@@ -868,6 +894,20 @@ public sealed class BatchService
         {
             stored.Updated = PlatformSupport.After(_clock.UtcNow, stored.Updated);
             prepared.Changes.Add(new BatchChange { Action = "replace", List = stored });
+            prepared.Intents.Add(new Intent
+            {
+                Index = op.Index,
+                Target = "list",
+                Action = "replace",
+                WorkspaceId = workspace.Id,
+                ListId = stored.Id,
+                SetName = op.NameSpecified,
+                Name = stored.Name,
+                SetDescription = op.Description.Specified,
+                Description = stored.Description,
+                SetSchema = op.SchemaJson is not null,
+                Schema = op.SchemaJson,
+            });
             if (op.NameSpecified || op.Description.Specified)
             {
                 prepared.Audits.Add(Audit(caller, AuditActions.ListUpdated, ("tenantId", caller.Tenant.Id), ("workspaceId", workspace.Id), ("listId", stored.Id)));
@@ -964,36 +1004,149 @@ public sealed class BatchService
         return null;
     }
 
-    private async Task RefreshAsync(Caller caller, List<Op> ops, Prepared prepared, CancellationToken cancellationToken)
+    /// <summary>
+    /// Rebuilds every replace and delete from a new read and applies only that operation's fields.
+    /// A concurrent token, role, schema, or delete stays on the fresh document. FR-53.
+    /// </summary>
+    /// <returns>The operation index when its target is gone, or null when the changes are ready to commit.</returns>
+    private async Task<int?> ApplyOnFreshAsync(Caller caller, Prepared prepared, CancellationToken cancellationToken)
     {
-        if (ops[0].Type is not ("member" or "workspace" or "list"))
+        if (prepared.Intents.Count == 0)
         {
-            return;
+            return null;
         }
 
-        foreach (var change in prepared.Changes)
+        var creates = prepared.Changes.Where(change => change.Action == "create").ToList();
+        var writes = new List<BatchChange>();
+        foreach (var intent in prepared.Intents)
         {
-            if (change.Action is not ("replace" or "delete"))
+            var missing = await ApplyIntentAsync(caller, intent, writes, prepared, cancellationToken).ConfigureAwait(false);
+            if (missing is int index)
             {
-                continue;
-            }
-
-            if (change.Member is not null)
-            {
-                var fresh = await _members.GetAsync(caller.Tenant.Id, change.Member.Id, cancellationToken).ConfigureAwait(false) ?? throw new DocumentMissingException();
-                change.Member.ETag = fresh.ETag;
-            }
-            else if (change.Workspace is not null)
-            {
-                var fresh = await _workspaces.GetAsync(caller.Tenant.Id, change.Workspace.Id, cancellationToken).ConfigureAwait(false) ?? throw new DocumentMissingException();
-                change.Workspace.ETag = fresh.ETag;
-            }
-            else if (change.List is not null)
-            {
-                var fresh = await _lists.GetAsync(caller.Tenant.Id, change.List.WorkspaceId, change.List.Id, cancellationToken).ConfigureAwait(false) ?? throw new DocumentMissingException();
-                change.List.ETag = fresh.ETag;
+                return index;
             }
         }
+
+        prepared.Changes.Clear();
+        prepared.Changes.AddRange(creates);
+        prepared.Changes.AddRange(writes);
+        return null;
+    }
+
+    private async Task<int?> ApplyIntentAsync(Caller caller, Intent intent, List<BatchChange> writes, Prepared prepared, CancellationToken cancellationToken)
+    {
+        switch (intent.Target)
+        {
+            case "member":
+            {
+                var member = await _members.GetAsync(caller.Tenant.Id, intent.MemberId!, cancellationToken).ConfigureAwait(false);
+                if (member is null)
+                {
+                    return intent.Index;
+                }
+
+                if (intent.Action == "replace")
+                {
+                    member.IsTenantOwner = intent.Flag;
+                    prepared.Bodies[intent.Index] = Body(new MemberResult(member.Id, member.Email, member.IsTenantOwner, member.InvitationSent));
+                }
+
+                writes.Add(new BatchChange { Action = intent.Action, Member = member });
+                return null;
+            }
+            case "workspace":
+            {
+                var workspace = await _workspaces.GetAsync(caller.Tenant.Id, intent.WorkspaceId!, cancellationToken).ConfigureAwait(false);
+                if (workspace is null || workspace.DeletedAt is not null)
+                {
+                    return intent.Index;
+                }
+
+                if (intent.Action == "delete")
+                {
+                    workspace.DeletedAt = _clock.UtcNow;
+                    workspace.Updated = workspace.DeletedAt.Value;
+                }
+                else
+                {
+                    if (intent.SetName)
+                    {
+                        workspace.Name = intent.Name ?? workspace.Name;
+                    }
+
+                    if (intent.SetDescription)
+                    {
+                        workspace.Description = intent.Description;
+                    }
+
+                    workspace.Updated = PlatformSupport.After(_clock.UtcNow, workspace.Updated);
+                    prepared.Bodies[intent.Index] = Body(new WorkspaceUpdatedResult(workspace.Id, workspace.Name, workspace.Description));
+                }
+
+                writes.Add(new BatchChange { Action = intent.Action, Workspace = workspace });
+                return null;
+            }
+            default:
+            {
+                var list = await _lists.GetAsync(caller.Tenant.Id, intent.WorkspaceId!, intent.ListId!, cancellationToken).ConfigureAwait(false);
+                if (list is null || list.DeletedAt is not null)
+                {
+                    return intent.Index;
+                }
+
+                if (intent.Action == "delete")
+                {
+                    list.DeletedAt = _clock.UtcNow;
+                    list.Updated = list.DeletedAt.Value;
+                }
+                else
+                {
+                    if (intent.SetName)
+                    {
+                        list.Name = intent.Name ?? list.Name;
+                    }
+
+                    if (intent.SetDescription)
+                    {
+                        list.Description = intent.Description;
+                    }
+
+                    if (intent.SetSchema)
+                    {
+                        list.Schema = intent.Schema ?? list.Schema;
+                        list.SchemaVersion++;
+                    }
+
+                    list.Updated = PlatformSupport.After(_clock.UtcNow, list.Updated);
+                    prepared.Bodies[intent.Index] = intent.SetSchema && !intent.SetName && !intent.SetDescription
+                        ? Body(new SchemaView(Parse(list.Schema), list.SchemaVersion))
+                        : Body(new ListView(list.Id, list.Name, list.SchemaVersion, list.Description));
+                }
+
+                writes.Add(new BatchChange { Action = intent.Action, List = list });
+                return null;
+            }
+        }
+    }
+
+    private static PlatformError? ParentIdError(Op op)
+    {
+        if (op.Type is not ("list" or "item") || op.ValueError is null)
+        {
+            return null;
+        }
+
+        if (op.WorkspaceId is null && op.ValueError.StartsWith("workspaceId:", StringComparison.Ordinal))
+        {
+            return PlatformError.BadRequest(op.ValueError);
+        }
+
+        if (op.Type == "item" && op.ListId is null && op.ValueError.StartsWith("listId:", StringComparison.Ordinal))
+        {
+            return PlatformError.BadRequest(op.ValueError);
+        }
+
+        return null;
     }
 
     private async Task<WorkspaceDocument?> LiveWorkspaceAsync(Caller caller, string workspaceId, CancellationToken cancellationToken)
@@ -1184,9 +1337,40 @@ public sealed class BatchService
         public string? ValueError { get; set; }
     }
 
+    private sealed class Intent
+    {
+        public int Index { get; init; }
+
+        public string Target { get; init; } = "";
+
+        public string Action { get; init; } = "";
+
+        public string? MemberId { get; init; }
+
+        public string? WorkspaceId { get; init; }
+
+        public string? ListId { get; init; }
+
+        public bool Flag { get; init; }
+
+        public bool SetName { get; init; }
+
+        public string? Name { get; init; }
+
+        public bool SetDescription { get; init; }
+
+        public string? Description { get; init; }
+
+        public bool SetSchema { get; init; }
+
+        public string? Schema { get; init; }
+    }
+
     private sealed class Prepared
     {
         public List<BatchChange> Changes { get; } = [];
+
+        public List<Intent> Intents { get; } = [];
 
         public List<AuditEntry> Audits { get; } = [];
 

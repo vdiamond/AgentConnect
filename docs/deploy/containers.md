@@ -52,11 +52,20 @@ Container names, partition-key paths, unique keys, and the setting names above m
 | Container | Partition key paths | Unique key |
 | --- | --- | --- |
 | Tenants | `/id` | none |
-| Members | `/tenantId` | `/emailKey` |
+| Members | `/tenantId` | `/emailLower` |
 | Workspaces | `/tenantId` | `/nameKey` |
 | Lists | `/tenantId`, `/workspaceId` | `/nameKey` |
 | Items | `/tenantId`, `/workspaceId`, `/listId` | none |
 
-Lists and Items are hierarchical. Microsoft.Azure.Cosmos 3.64.0 sets those to MultiHash version 2 when `PartitionKeyPaths` is assigned. Members also has composite indexes `/created`+`/id` and `/email`+`/id`. Workspaces, Lists, and Items have `/updated`+`/id`.
+Lists and Items are hierarchical. Microsoft.Azure.Cosmos 3.64.0 sets those to MultiHash version 2 when `PartitionKeyPaths` is assigned. Composite indexes, each usable in both directions:
+
+| Container | Composite indexes |
+| --- | --- |
+| Members | `/created`+`/id`, `/emailLower`+`/id`, `/isTenantOwner`+`/id`, `/invitationSent`+`/id` |
+| Workspaces | `/updated`+`/id`, `/name`+`/id`, `/created`+`/id` |
+| Lists | `/updated`+`/id`, `/name`+`/id`, `/schemaVersion`+`/id`, `/created`+`/id` |
+| Items | `/updated`+`/id` |
+
+v9 adds seven composite indexes that must be added to existing containers before deploy, or an `orderBy` on that field fails in Cosmos: Workspaces `/name`+`/id` and `/created`+`/id`; Lists `/name`+`/id`, `/schemaVersion`+`/id`, and `/created`+`/id`; Members `/isTenantOwner`+`/id` and `/invitationSent`+`/id`. The application does not create them. A Members container created earlier with unique key `/emailKey` and composite `/email`+`/id` has to be recreated with `/emailLower`; that unique key cannot be changed in place.
 
 One mismatch: the plan calls Tenants, Members, and Workspaces Hash version 2. The code only sets `PartitionKeyPath`. In that SDK the stored kind is Hash and the version is left unset. Image names in the plan match the names above. The plan's Azure app names (`ac-api`, `ac-mcp`, `ac-deletion-job`) are not in this repository.

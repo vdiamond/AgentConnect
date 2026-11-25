@@ -67,6 +67,9 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     /// <summary>Runs after a workspace is read and before the clone is returned.</summary>
     public Action? AfterWorkspaceRead { get; set; }
 
+    /// <summary>Runs after a member is read and before the clone is returned.</summary>
+    public Action? AfterMemberRead { get; set; }
+
     /// <summary>Runs after a tenant is read and before the clone is returned.</summary>
     public Action? AfterTenantRead { get; set; }
 
@@ -124,7 +127,14 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         lock (_gate)
         {
-            return Task.FromResult(_members.TryGetValue(Key(tenantId, memberId), out var member) ? Clone(member) : null);
+            if (!_members.TryGetValue(Key(tenantId, memberId), out var member))
+            {
+                return Task.FromResult<MemberDocument?>(null);
+            }
+
+            var clone = Clone(member);
+            AfterMemberRead?.Invoke();
+            return Task.FromResult<MemberDocument?>(clone);
         }
     }
 
@@ -137,7 +147,9 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
             {
                 if (member.TenantId == tenantId && EmailRules.Same(member.Email, email))
                 {
-                    return Task.FromResult<MemberDocument?>(Clone(member));
+                    var clone = Clone(member);
+                    AfterMemberRead?.Invoke();
+                    return Task.FromResult<MemberDocument?>(clone);
                 }
             }
         }

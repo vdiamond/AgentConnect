@@ -624,6 +624,133 @@ public sealed class V9SpecTests
         }
     }
 
+    [Fact]
+    [Trait("T", "T-96")]
+    public async Task BatchWrites_ReapplyOnTheFreshDocument()
+    {
+        var owner = await _session.CreateTenantAsync("Fresh");
+        var database = _session.Platform.Database;
+        var workspaces = (IWorkspaceRepository)database;
+        try
+        {
+            var added = await _session.SendAsync(HttpMethod.Post, "/members", new { email = "token-" + Guid.NewGuid().ToString("N")[..8] + "@example.com" }, owner.Token);
+            var memberId = Json(added.Body).GetProperty("id").GetString()!;
+            var oldToken = Json(added.Body).GetProperty("token").GetString()!;
+            var memberEmail = Json(added.Body).GetProperty("email").GetString()!;
+            string? freshToken = null;
+            var memberReads = 0;
+            database.AfterMemberRead = () =>
+            {
+                if (++memberReads == 1)
+                {
+                    return;
+                }
+
+                database.AfterMemberRead = null;
+                var current = database.GetAsync(owner.TenantId, memberId, CancellationToken.None).GetAwaiter().GetResult()!;
+                var issued = _session.Platform.Tokens.Issue(owner.TenantId, memberId);
+                current.TokenHash = issued.Hash;
+                current.TokenEncrypted = issued.Encrypted;
+                database.ReplaceAsync(current, CancellationToken.None).GetAwaiter().GetResult();
+                freshToken = issued.Token;
+            };
+            var flagged = await BatchAsync(owner.Token, new object[] { new { op = "upsert", type = "member", email = memberEmail, isTenantOwner = true } });
+            Assert.Equal(new[] { 200 }, Statuses(flagged.Body));
+            Assert.NotNull(freshToken);
+            Assert.Equal(401, (await _session.SendAsync(HttpMethod.Get, "/workspaces", null, oldToken)).Status);
+            Assert.Equal(200, (await _session.SendAsync(HttpMethod.Get, "/workspaces", null, freshToken)).Status);
+            Assert.True(Json(flagged.Body).GetProperty("results")[0].GetProperty("result").GetProperty("isTenantOwner").GetBoolean());
+
+            var grantedBody = await _session.SendAsync(HttpMethod.Post, "/members", new { email = "role-" + Guid.NewGuid().ToString("N")[..8] + "@example.com" }, owner.Token);
+            var grantedId = Json(grantedBody.Body).GetProperty("id").GetString()!;
+            var grantedEmail = Json(grantedBody.Body).GetProperty("email").GetString()!;
+            var workspace = await WorkspaceAsync(owner.Token);
+            memberReads = 0;
+            database.AfterMemberRead = () =>
+            {
+                if (++memberReads == 1)
+                {
+                    return;
+                }
+
+                database.AfterMemberRead = null;
+                var current = database.GetAsync(owner.TenantId, grantedId, CancellationToken.None).GetAwaiter().GetResult()!;
+                current.WorkspaceRoles[workspace] = StoredRoles.Write;
+                database.ReplaceAsync(current, CancellationToken.None).GetAwaiter().GetResult();
+            };
+            var owned = await BatchAsync(owner.Token, new object[] { new { op = "upsert", type = "member", email = grantedEmail, isTenantOwner = true } });
+            Assert.Equal(new[] { 200 }, Statuses(owned.Body));
+            var seated = Emails((await _session.SendAsync(HttpMethod.Get, "/workspaces/" + workspace + "/members", null, owner.Token)).Body);
+            Assert.Contains(grantedEmail, seated);
+
+            await _session.SendAsync(HttpMethod.Post, "/workspaces/" + workspace + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token);
+            var doomed = await WorkspaceAsync(owner.Token);
+            Assert.Equal(200, (await _session.SendAsync(HttpMethod.Post, "/workspaces/" + doomed + "/members", new { email = owner.Email, role = "WorkspaceOwner" }, owner.Token)).Status);
+            var doomedName = (await workspaces.GetAsync(owner.TenantId, doomed, CancellationToken.None))!.Name;
+            database.AfterWorkspaceRead = () =>
+            {
+                database.AfterWorkspaceRead = null;
+                var current = workspaces.GetAsync(owner.TenantId, doomed, CancellationToken.None).GetAwaiter().GetResult()!;
+                current.DeletedAt = DateTimeOffset.UtcNow;
+                workspaces.ReplaceAsync(current, CancellationToken.None).GetAwaiter().GetResult();
+            };
+            var resurrect = await BatchAsync(owner.Token, new object[] { new { op = "upsert", type = "workspace", workspaceId = doomed, name = "Renamed" } });
+            Assert.Equal(404, Json(resurrect.Body).GetProperty("results")[0].GetProperty("status").GetInt32());
+            Assert.Equal("$: not found", Json(resurrect.Body).GetProperty("results")[0].GetProperty("error").GetString());
+            var deletedWorkspace = (await workspaces.GetAsync(owner.TenantId, doomed, CancellationToken.None))!;
+            Assert.NotNull(deletedWorkspace.DeletedAt);
+            Assert.Equal(doomedName, deletedWorkspace.Name);
+
+            var list = await CreateListAsync(owner.Token, workspace, "Versioned", null);
+            database.AfterListRead = () =>
+            {
+                database.AfterListRead = null;
+                var current = database.GetAsync(owner.TenantId, workspace, list, CancellationToken.None).GetAwaiter().GetResult()!;
+                current.SchemaVersion = 4;
+                current.Schema = "{\"properties\":[{\"name\":\"title\",\"type\":\"String\",\"required\":true},{\"name\":\"note\",\"type\":\"String\"}]}";
+                database.ReplaceAsync(current, CancellationToken.None).GetAwaiter().GetResult();
+            };
+            var renamed = await BatchAsync(owner.Token, new object[] { new { op = "upsert", type = "list", workspaceId = workspace, listId = list, name = "Renamed" } });
+            Assert.Equal(new[] { 200 }, Statuses(renamed.Body));
+            var kept = (await database.GetAsync(owner.TenantId, workspace, list, CancellationToken.None))!;
+            Assert.Equal("Renamed", kept.Name);
+            Assert.Equal(4, kept.SchemaVersion);
+            Assert.Contains("note", kept.Schema, StringComparison.Ordinal);
+
+            var gone = await CreateListAsync(owner.Token, workspace, "Gone", null);
+            database.AfterListRead = () =>
+            {
+                database.AfterListRead = null;
+                var current = database.GetAsync(owner.TenantId, workspace, gone, CancellationToken.None).GetAwaiter().GetResult()!;
+                current.DeletedAt = DateTimeOffset.UtcNow;
+                database.ReplaceAsync(current, CancellationToken.None).GetAwaiter().GetResult();
+            };
+            var listRename = await BatchAsync(owner.Token, new object[] { new { op = "upsert", type = "list", workspaceId = workspace, listId = gone, name = "Back" } });
+            Assert.Equal(404, Json(listRename.Body).GetProperty("results")[0].GetProperty("status").GetInt32());
+            var deletedList = (await database.GetAsync(owner.TenantId, workspace, gone, CancellationToken.None))!;
+            Assert.NotNull(deletedList.DeletedAt);
+            Assert.Equal("Gone", deletedList.Name);
+        }
+        finally
+        {
+            database.AfterMemberRead = null;
+            database.AfterWorkspaceRead = null;
+            database.AfterListRead = null;
+        }
+    }
+
+    [Fact]
+    public async Task NonStringBatchIds_AreBadRequests()
+    {
+        var owner = await _session.CreateTenantAsync("Ids");
+        var workspaceId = await RawAsync(HttpMethod.Post, "/batch", """{"operations":[{"op":"get","type":"list","workspaceId":5,"listId":"x"}]}""", owner.Token);
+        Assert.Equal(400, workspaceId.Status);
+        Assert.Equal("workspaceId: expected String, found Number", Error(workspaceId.Body));
+        var listId = await RawAsync(HttpMethod.Post, "/batch", """{"operations":[{"op":"get","type":"item","workspaceId":"w","listId":5,"itemId":"i"}]}""", owner.Token);
+        Assert.Equal(400, listId.Status);
+        Assert.Equal("listId: expected String, found Number", Error(listId.Body));
+    }
+
     #region private
 
     private async Task<string> WorkspaceAsync(string token)
