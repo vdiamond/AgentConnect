@@ -32,7 +32,7 @@ public enum ItemWriteFault
 /// <summary>
 /// An in-memory store with the same partition boundaries as section 5.
 /// </summary>
-public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWorkspaceRepository, IListRepository, IItemRepository, IDeletionStore
+public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWorkspaceRepository, IListRepository, IItemRepository, IDeletionStore, IBatchStore
 {
     /// <summary>Gets or sets a fault thrown by the next item write.</summary>
     public ItemWriteFault WriteFault { get; set; }
@@ -446,6 +446,96 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
         }
     }
 
+    /// <inheritdoc />
+    Task<ResultPage<MemberDocument>> IMemberRepository.QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var rows = _members.Values.Where(member => member.TenantId == query.TenantId).ToList();
+            if (query.Kind == CatalogKind.WorkspaceMember)
+            {
+                rows = rows.Where(member => member.WorkspaceRoles.ContainsKey(query.WorkspaceId ?? "")).ToList();
+            }
+
+            var page = CatalogEngine.Execute(rows, query, (member, path) => ReadMember(member, path, query.WorkspaceId));
+            page.Items = page.Items.Select(Clone).ToArray();
+            return Task.FromResult(page);
+        }
+    }
+
+    /// <inheritdoc />
+    Task<ResultPage<WorkspaceDocument>> IWorkspaceRepository.QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (query.Ids is { Count: 0 })
+            {
+                return Task.FromResult(new ResultPage<WorkspaceDocument>());
+            }
+
+            var allowed = query.Ids is null ? null : query.Ids.ToHashSet(StringComparer.Ordinal);
+            var rows = _workspaces.Values.Where(workspace => workspace.TenantId == query.TenantId && workspace.DeletedAt is null && (allowed is null || allowed.Contains(workspace.Id))).ToList();
+            var page = CatalogEngine.Execute(rows, query, ReadWorkspace);
+            page.Items = page.Items.Select(Clone).ToArray();
+            return Task.FromResult(page);
+        }
+    }
+
+    /// <inheritdoc />
+    Task<ResultPage<ListDocument>> IListRepository.QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var rows = _lists.Values.Where(list => list.TenantId == query.TenantId && list.WorkspaceId == query.WorkspaceId && list.DeletedAt is null).ToList();
+            var page = CatalogEngine.Execute(rows, query, ReadList);
+            page.Items = page.Items.Select(Clone).ToArray();
+            return Task.FromResult(page);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task CommitAsync(BatchCommit commit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        lock (_gate)
+        {
+            ThrowFault();
+            var checksEtag = commit.Container is "member" or "workspace" or "list"
+                && commit.Changes.Any(change => change.Action is "replace" or "delete");
+            if (checksEtag && ReplaceConflictsRemaining > 0)
+            {
+                ReplaceConflictsRemaining--;
+                throw new StorageConflictException();
+            }
+
+            switch (commit.Container)
+            {
+                case "member":
+                {
+                    CommitMembers(commit.Changes);
+                    break;
+                }
+                case "workspace":
+                {
+                    CommitWorkspaces(commit.Changes);
+                    break;
+                }
+                case "list":
+                {
+                    CommitLists(commit.Changes);
+                    break;
+                }
+                default:
+                {
+                    CommitItems(commit.Changes);
+                    break;
+                }
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
     #region private
 
     private readonly object _gate = new();
@@ -761,6 +851,164 @@ public sealed class MemoryDatabase : ITenantRepository, IMemberRepository, IWork
     {
         var json = JsonSerializer.Serialize(value);
         return JsonSerializer.Deserialize<T>(json)!;
+    }
+
+    private void CommitMembers(IReadOnlyList<BatchChange> changes)
+    {
+        foreach (var change in changes)
+        {
+            var member = change.Member!;
+            var key = Key(member.TenantId, member.Id);
+            if (change.Action == "delete")
+            {
+                if (!_members.ContainsKey(key))
+                {
+                    throw new DocumentMissingException();
+                }
+
+                _members.Remove(key);
+                continue;
+            }
+
+            member.StampKey();
+            if (_members.Values.Any(stored => stored.TenantId == member.TenantId && stored.Id != member.Id && stored.EmailLower == member.EmailLower))
+            {
+                throw new DuplicateValueException();
+            }
+
+            if (change.Action == "replace" && (!_members.TryGetValue(key, out var stored) || !string.Equals(stored.ETag, member.ETag, StringComparison.Ordinal)))
+            {
+                throw new StorageConflictException();
+            }
+
+            member.ETag = Guid.NewGuid().ToString("N");
+            _members[key] = Clone(member);
+        }
+    }
+
+    private void CommitWorkspaces(IReadOnlyList<BatchChange> changes)
+    {
+        foreach (var change in changes)
+        {
+            var workspace = change.Workspace!;
+            var key = Key(workspace.TenantId, workspace.Id);
+            if (change.Action == "delete")
+            {
+                if (!_workspaces.TryGetValue(key, out var stored) || !string.Equals(stored.ETag, workspace.ETag, StringComparison.Ordinal))
+                {
+                    throw new StorageConflictException();
+                }
+
+                workspace.StampKey();
+                workspace.ETag = Guid.NewGuid().ToString("N");
+                _workspaces[key] = Clone(workspace);
+                continue;
+            }
+
+            workspace.StampKey();
+            EnsureWorkspaceName(workspace);
+            if (change.Action == "replace" && (!_workspaces.TryGetValue(key, out var current) || !string.Equals(current.ETag, workspace.ETag, StringComparison.Ordinal)))
+            {
+                throw new StorageConflictException();
+            }
+
+            workspace.ETag = Guid.NewGuid().ToString("N");
+            _workspaces[key] = Clone(workspace);
+        }
+    }
+
+    private void CommitLists(IReadOnlyList<BatchChange> changes)
+    {
+        foreach (var change in changes)
+        {
+            var list = change.List!;
+            var key = Key(list.TenantId, list.WorkspaceId, list.Id);
+            if (change.Action == "delete")
+            {
+                if (!_lists.TryGetValue(key, out var stored) || !string.Equals(stored.ETag, list.ETag, StringComparison.Ordinal))
+                {
+                    throw new StorageConflictException();
+                }
+
+                list.StampKey();
+                list.ETag = Guid.NewGuid().ToString("N");
+                _lists[key] = Clone(list);
+                continue;
+            }
+
+            list.StampKey();
+            EnsureListName(list);
+            if (change.Action == "replace" && (!_lists.TryGetValue(key, out var current) || !string.Equals(current.ETag, list.ETag, StringComparison.Ordinal)))
+            {
+                throw new StorageConflictException();
+            }
+
+            list.ETag = Guid.NewGuid().ToString("N");
+            _lists[key] = Clone(list);
+        }
+    }
+
+    private void CommitItems(IReadOnlyList<BatchChange> changes)
+    {
+        foreach (var change in changes)
+        {
+            var item = change.Item!;
+            var key = Key(item.TenantId, item.WorkspaceId, item.ListId, item.Id);
+            if (change.Action == "delete")
+            {
+                _items.Remove(key);
+                continue;
+            }
+
+            if (_items.TryGetValue(key, out var stored))
+            {
+                item.Created = stored.Created;
+            }
+
+            item.ETag = Guid.NewGuid().ToString("N");
+            _items[key] = Clone(item);
+        }
+    }
+
+    private static QueryValue? ReadWorkspace(WorkspaceDocument workspace, string path)
+    {
+        return path switch
+        {
+            "id" => CatalogEngine.String(workspace.Id),
+            "name" => CatalogEngine.String(workspace.Name),
+            "description" => workspace.Description is null ? null : CatalogEngine.String(workspace.Description),
+            "created" => CatalogEngine.String(CatalogEngine.CanonicalTime(workspace.Created)),
+            "updated" => CatalogEngine.String(CatalogEngine.CanonicalTime(workspace.Updated)),
+            _ => null,
+        };
+    }
+
+    private static QueryValue? ReadList(ListDocument list, string path)
+    {
+        return path switch
+        {
+            "id" => CatalogEngine.String(list.Id),
+            "name" => CatalogEngine.String(list.Name),
+            "description" => list.Description is null ? null : CatalogEngine.String(list.Description),
+            "schemaVersion" => CatalogEngine.Number(list.SchemaVersion),
+            "created" => CatalogEngine.String(CatalogEngine.CanonicalTime(list.Created)),
+            "updated" => CatalogEngine.String(CatalogEngine.CanonicalTime(list.Updated)),
+            _ => null,
+        };
+    }
+
+    private static QueryValue? ReadMember(MemberDocument member, string path, string? workspaceId)
+    {
+        return path switch
+        {
+            "id" => CatalogEngine.String(member.Id),
+            "email" => CatalogEngine.String(member.EmailLower),
+            "isTenantOwner" => CatalogEngine.Boolean(member.IsTenantOwner),
+            "invitationSent" => CatalogEngine.Boolean(member.InvitationSent),
+            "created" => CatalogEngine.String(CatalogEngine.CanonicalTime(member.Created)),
+            "role" => workspaceId is not null && member.WorkspaceRoles.TryGetValue(workspaceId, out var role) ? CatalogEngine.String(StoredRoles.ToApi(role)) : null,
+            _ => null,
+        };
     }
 
     private static string Key(params string[] parts)

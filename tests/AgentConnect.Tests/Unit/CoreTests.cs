@@ -93,18 +93,22 @@ public sealed class CoreTests
         var invitation = EmailTemplates.Invitation("ann@example.com", "Acme", "AgentConnect", null, null, "tok", "http://mcp", "http://api");
         Assert.Contains("AgentConnect", invitation.Subject, StringComparison.Ordinal);
         Assert.Contains("Acme", invitation.Subject, StringComparison.Ordinal);
-        Assert.Contains("Invited by: AgentConnect", invitation.Body, StringComparison.Ordinal);
-        Assert.Contains("Token: tok", invitation.Body, StringComparison.Ordinal);
-        Assert.Contains(EmailTemplates.TokenNote, invitation.Body, StringComparison.Ordinal);
+        Assert.Contains("AgentConnect invited you to AgentConnect for Acme.", invitation.Body, StringComparison.Ordinal);
+        Assert.Contains(">Token</td>", invitation.Body, StringComparison.Ordinal);
+        Assert.Contains(EmailTemplates.TokenNote("Acme"), invitation.Body, StringComparison.Ordinal);
         Assert.Contains("http://mcp", invitation.Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("<a", invitation.Body, StringComparison.Ordinal);
         Assert.DoesNotContain("Workspace:", invitation.Body, StringComparison.Ordinal);
+        Assert.True(invitation.Html);
+        Assert.True(EmailTemplates.TryReadToken(invitation.Body, out var read));
+        Assert.Equal("tok", read);
 
         var workspaceInvite = EmailTemplates.Invitation("ann@example.com", "Acme", "owner@example.com", "Ops", "WorkspaceWrite", "tok", "http://mcp", "http://api");
-        Assert.Contains("Workspace: Ops", workspaceInvite.Body, StringComparison.Ordinal);
-        Assert.Contains("Role: WorkspaceWrite", workspaceInvite.Body, StringComparison.Ordinal);
+        Assert.Contains("Workspace: Ops. Role: WorkspaceWrite.", workspaceInvite.Body, StringComparison.Ordinal);
 
         var token = EmailTemplates.Token("ann@example.com", "Acme", "tok", "http://mcp", "http://api", previousTokenNoLongerWorks: true);
         Assert.Contains(EmailTemplates.PreviousTokenLine, token.Body, StringComparison.Ordinal);
+        Assert.True(token.Html);
         var quiet = EmailTemplates.Token("ann@example.com", "Acme", "tok", "http://mcp", "http://api", previousTokenNoLongerWorks: false);
         Assert.DoesNotContain(EmailTemplates.PreviousTokenLine, quiet.Body, StringComparison.Ordinal);
 
@@ -113,6 +117,7 @@ public sealed class CoreTests
         Assert.Contains("Acme", access.Subject, StringComparison.Ordinal);
         Assert.Contains("Granted by: owner@example.com", access.Body, StringComparison.Ordinal);
         Assert.False(access.ContainsToken);
+        Assert.False(access.Html);
         Assert.DoesNotContain("Token:", access.Body, StringComparison.Ordinal);
     }
 

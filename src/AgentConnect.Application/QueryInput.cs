@@ -87,6 +87,74 @@ public static class QueryInput
             return true;
         }
     }
+
+    /// <summary>
+    /// Parses a list <c>query</c> parameter. Only <c>where</c> and <c>orderBy</c> are defined. FR-55.
+    /// </summary>
+    /// <param name="queryText">The parameter, or null when it was omitted.</param>
+    /// <param name="where">The where value, or undefined.</param>
+    /// <param name="orderBy">The orderBy value, or undefined.</param>
+    /// <param name="unknownPaths">Unknown keys, including <c>shape</c> and <c>schemaVersion</c>.</param>
+    /// <param name="error">The error text when the parameter is not usable.</param>
+    /// <returns><see langword="false"/> when the parameter is malformed or not an object.</returns>
+    public static bool TryReadCatalog(string? queryText, out JsonElement where, out JsonElement orderBy, out IReadOnlyList<string> unknownPaths, out string error)
+    {
+        where = default;
+        orderBy = default;
+        unknownPaths = [];
+        error = "";
+        if (queryText is null)
+        {
+            return true;
+        }
+
+        JsonDocument document;
+        try
+        {
+            document = JsonDocument.Parse(queryText);
+        }
+        catch (JsonException)
+        {
+            error = "query: malformed JSON";
+            return false;
+        }
+
+        using (document)
+        {
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                error = "query: expected Object, found " + JsonKinds.Of(root);
+                return false;
+            }
+
+            var unknown = new List<string>();
+            foreach (var property in root.EnumerateObject())
+            {
+                switch (property.Name)
+                {
+                    case "where":
+                    {
+                        where = property.Value.Clone();
+                        break;
+                    }
+                    case "orderBy":
+                    {
+                        orderBy = property.Value.Clone();
+                        break;
+                    }
+                    default:
+                    {
+                        unknown.Add(property.Name);
+                        break;
+                    }
+                }
+            }
+
+            unknownPaths = unknown;
+            return true;
+        }
+    }
 }
 
 /// <summary>
@@ -104,7 +172,17 @@ public static class DocumentLimits
     /// <returns><see langword="true"/> when the document is too large.</returns>
     public static bool ItemTooLarge(ItemDocument item)
     {
+        return ItemBytes(item) > MaxItemBytes;
+    }
+
+    /// <summary>
+    /// Returns the serialized size of an item document.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <returns>The size in bytes.</returns>
+    public static int ItemBytes(ItemDocument item)
+    {
         var json = JsonSerializer.Serialize(item);
-        return System.Text.Encoding.UTF8.GetByteCount(json) > MaxItemBytes;
+        return System.Text.Encoding.UTF8.GetByteCount(json);
     }
 }

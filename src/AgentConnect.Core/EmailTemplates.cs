@@ -1,13 +1,14 @@
 namespace AgentConnect;
 
 /// <summary>
-/// An email to send. The body is plain text.
+/// An email to send. Invitation and token emails are HTML only (FR-54). Workspace access stays plain text.
 /// </summary>
 /// <param name="To">The recipient.</param>
 /// <param name="Subject">The subject. It names AgentConnect and the tenant.</param>
-/// <param name="Body">The body.</param>
+/// <param name="Body">The body. HTML when <paramref name="Html"/> is true, with no plain-text alternative.</param>
 /// <param name="ContainsToken">Whether the body contains a token.</param>
-public sealed record EmailMessage(string To, string Subject, string Body, bool ContainsToken);
+/// <param name="Html">Whether <paramref name="Body"/> is HTML and must be sent without a plain-text part.</param>
+public sealed record EmailMessage(string To, string Subject, string Body, bool ContainsToken, bool Html = false);
 
 /// <summary>
 /// Sends email. A failure is reported to the caller; it does not roll back the change that triggered it.
@@ -43,11 +44,21 @@ public sealed class EmailDeliveryException : Exception
 /// </summary>
 public static class EmailTemplates
 {
-    /// <summary>The line that tells the reader the previous token is dead.</summary>
-    public const string PreviousTokenLine = "The previous token no longer works.";
+    /// <summary>The line that tells the reader the previous token is dead. Token emails only, after a regeneration.</summary>
+    public const string PreviousTokenLine = "Your previous token no longer works.";
 
-    /// <summary>The note that travels with every token.</summary>
-    public const string TokenNote = "Keep this token secret. It does not expire. Ask a TenantOwner if it is lost.";
+    /// <summary>The fixed-width style used for URL and token cells so mail systems do not rewrite them as links.</summary>
+    public const string ValueStyle = "font-family: ui-monospace, monospace";
+
+    /// <summary>
+    /// The note that travels with every token.
+    /// </summary>
+    /// <param name="tenantName">The tenant name.</param>
+    /// <returns>The note.</returns>
+    public static string TokenNote(string tenantName)
+    {
+        return "Keep this token secret. It does not expire. If you lose it, ask a TenantOwner of " + tenantName + ".";
+    }
 
     /// <summary>
     /// Builds an invitation email.
@@ -71,19 +82,10 @@ public static class EmailTemplates
         string mcpServerUrl,
         string restApiUrl)
     {
-        var body = "Tenant: " + tenantName + "\n"
-            + "Invited by: " + invitedBy + "\n";
-        if (workspaceName is not null)
-        {
-            body += "Workspace: " + workspaceName + "\n"
-                + "Role: " + role + "\n";
-        }
-
-        body += "Token: " + token + "\n"
-            + TokenNote + "\n"
-            + "MCP Server URL: " + mcpServerUrl + "\n"
-            + "REST API URL: " + restApiUrl + "\n";
-        return new EmailMessage(to, "AgentConnect invitation — " + tenantName, body, true);
+        var greeting = invitedBy + " invited you to AgentConnect for " + tenantName + ".";
+        string? workspaceLine = workspaceName is null ? null : "Workspace: " + workspaceName + ". Role: " + role + ".";
+        var body = Layout(greeting, workspaceLine, mcpServerUrl, restApiUrl, token, TokenNote(tenantName), previousToken: false);
+        return new EmailMessage(to, "AgentConnect invitation — " + tenantName, body, true, true);
     }
 
     /// <summary>
@@ -104,17 +106,9 @@ public static class EmailTemplates
         string restApiUrl,
         bool previousTokenNoLongerWorks)
     {
-        var body = "Tenant: " + tenantName + "\n"
-            + "Token: " + token + "\n"
-            + TokenNote + "\n"
-            + "MCP Server URL: " + mcpServerUrl + "\n"
-            + "REST API URL: " + restApiUrl + "\n";
-        if (previousTokenNoLongerWorks)
-        {
-            body += PreviousTokenLine + "\n";
-        }
-
-        return new EmailMessage(to, "AgentConnect token — " + tenantName, body, true);
+        var greeting = "Here is your AgentConnect token for " + tenantName + ".";
+        var body = Layout(greeting, null, mcpServerUrl, restApiUrl, token, TokenNote(tenantName), previousTokenNoLongerWorks);
+        return new EmailMessage(to, "AgentConnect token — " + tenantName, body, true, true);
     }
 
     /// <summary>
@@ -137,8 +131,77 @@ public static class EmailTemplates
             + "Workspace: " + workspaceName + "\n"
             + "Role: " + role + "\n"
             + "Granted by: " + grantedBy + "\n";
-        return new EmailMessage(to, "AgentConnect workspace access — " + tenantName, body, false);
+        return new EmailMessage(to, "AgentConnect workspace access — " + tenantName, body, false, false);
     }
+
+    /// <summary>
+    /// Reads the token from an invitation or token email. The value is the plain text in the Token cell.
+    /// </summary>
+    /// <param name="body">The HTML body.</param>
+    /// <param name="token">The token when the cell is present.</param>
+    /// <returns><see langword="true"/> when the cell was found.</returns>
+    public static bool TryReadToken(string body, out string token)
+    {
+        token = "";
+        const string marker = ">Token</td><td style=\"" + ValueStyle + "\">";
+        var start = body.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            return false;
+        }
+
+        start += marker.Length;
+        var end = body.IndexOf('<', start);
+        if (end < 0)
+        {
+            return false;
+        }
+
+        token = System.Net.WebUtility.HtmlDecode(body[start..end]);
+        return token.Length > 0;
+    }
+
+    #region private
+
+    private static string Layout(string greeting, string? secondLine, string mcpServerUrl, string restApiUrl, string token, string note, bool previousToken)
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.Append("<!DOCTYPE html><html><body>");
+        builder.Append("<p>").Append(Encode(greeting)).Append("</p>");
+        if (secondLine is not null)
+        {
+            builder.Append("<p>").Append(Encode(secondLine)).Append("</p>");
+        }
+
+        builder.Append("<table>");
+        Row(builder, "MCP Server URL", mcpServerUrl);
+        Row(builder, "REST API URL", restApiUrl);
+        Row(builder, "Token", token);
+        builder.Append("</table>");
+        builder.Append("<p>")
+            .Append(Encode("To connect an agent, add the MCP Server URL to its MCP settings and send the token in the header Authorization: Bearer <token>. For the REST API, send the same header to the REST API URL."))
+            .Append("</p>");
+        builder.Append("<p>").Append(Encode(note)).Append("</p>");
+        if (previousToken)
+        {
+            builder.Append("<p>").Append(Encode(PreviousTokenLine)).Append("</p>");
+        }
+
+        builder.Append("</body></html>");
+        return builder.ToString();
+    }
+
+    private static void Row(System.Text.StringBuilder builder, string label, string value)
+    {
+        builder.Append("<tr><td>").Append(Encode(label)).Append("</td><td style=\"").Append(ValueStyle).Append("\">").Append(Encode(value)).Append("</td></tr>");
+    }
+
+    private static string Encode(string value)
+    {
+        return System.Net.WebUtility.HtmlEncode(value);
+    }
+
+    #endregion
 }
 
 /// <summary>

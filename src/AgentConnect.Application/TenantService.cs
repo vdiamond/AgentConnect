@@ -86,7 +86,7 @@ public sealed class TenantService
             Created = now,
             Subscription = null,
         };
-        var member = NewMember(tenant.Id, ownerEmail, isTenantOwner: true, now);
+        var (member, token) = NewMember(tenant.Id, ownerEmail, isTenantOwner: true, now);
         tenant.FirstMemberId = member.Id;
         await _tenants.CreateAsync(tenant, cancellationToken).ConfigureAwait(false);
         var duplicate = await Unique.CreateAsync(ct => _members.CreateAsync(member, ct), "email: already exists", cancellationToken).ConfigureAwait(false);
@@ -97,7 +97,7 @@ public sealed class TenantService
         Audit(PlatformSupport.PlatformOperator, AuditActions.TenantCreated, ("tenantId", tenant.Id));
         Audit(PlatformSupport.PlatformOperator, AuditActions.MemberAdded, ("tenantId", tenant.Id), ("memberId", member.Id));
         var sent = await SendInvitationAsync(member, tenant, "AgentConnect", null, null, cancellationToken).ConfigureAwait(false);
-        return OperationResult<TenantCreatedResult>.Ok(new TenantCreatedResult(tenant.Id, tenant.Name, tenant.Status, tenant.PageSizeDefault, tenant.PageSizeMax, member.Id, sent));
+        return OperationResult<TenantCreatedResult>.Ok(new TenantCreatedResult(tenant.Id, tenant.Name, tenant.Status, tenant.PageSizeDefault, tenant.PageSizeMax, member.Id, token, sent));
     }
 
     /// <summary>
@@ -247,11 +247,11 @@ public sealed class TenantService
     private readonly AgentConnectOptions _options;
     private readonly ILogger<TenantService> _logger;
 
-    private MemberDocument NewMember(string tenantId, string email, bool isTenantOwner, DateTimeOffset now)
+    private (MemberDocument Member, string Token) NewMember(string tenantId, string email, bool isTenantOwner, DateTimeOffset now)
     {
         var id = PlatformSupport.NewId();
         var issued = _tokens.Issue(tenantId, id);
-        return new MemberDocument
+        var member = new MemberDocument
         {
             Id = id,
             TenantId = tenantId,
@@ -263,6 +263,7 @@ public sealed class TenantService
             Created = now,
             LastTokenIssued = now,
         };
+        return (member, issued.Token);
     }
 
     private async Task<bool> SendInvitationAsync(MemberDocument member, TenantDocument tenant, string invitedBy, string? workspaceName, string? role, CancellationToken cancellationToken)

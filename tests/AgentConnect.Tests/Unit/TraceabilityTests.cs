@@ -26,7 +26,7 @@ public sealed class TraceabilityTests
         }
 
         var missing = new List<string>();
-        for (var number = 1; number <= 80; number++)
+        for (var number = 1; number <= 101; number++)
         {
             var id = "T-" + number.ToString();
             if (!found.Contains(id))

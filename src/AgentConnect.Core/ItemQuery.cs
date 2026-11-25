@@ -734,8 +734,22 @@ public static class ContinuationTokens
     /// <returns>The opaque token.</returns>
     public static string Issue(string fingerprint, int pageSize, string storeCursor)
     {
+        return Issue(fingerprint, pageSize, storeCursor, 1);
+    }
+
+    /// <summary>
+    /// Builds a continuation token that also carries the next 1-based row number. FR-57.
+    /// </summary>
+    /// <param name="fingerprint">The query fingerprint.</param>
+    /// <param name="pageSize">The page size of the query that issued the token.</param>
+    /// <param name="storeCursor">The store cursor.</param>
+    /// <param name="nextRow">The 1-based row number of the first entry on the next page.</param>
+    /// <returns>The opaque token.</returns>
+    public static string Issue(string fingerprint, int pageSize, string storeCursor, int nextRow)
+    {
         var bounded = pageSize > PageRules.PlatformPageSizeMax ? PageRules.PlatformPageSizeMax : pageSize;
-        var envelope = new Envelope(1, fingerprint, bounded, storeCursor, "");
+        var row = nextRow < 1 ? 1 : nextRow;
+        var envelope = new Envelope(1, fingerprint, bounded, storeCursor, row, "");
         envelope = envelope with { M = Mac(envelope) };
         var json = JsonSerializer.Serialize(envelope);
         return Base64Url(Encoding.UTF8.GetBytes(json));
@@ -766,8 +780,23 @@ public static class ContinuationTokens
     /// <returns><see langword="false"/> when the token is malformed or belongs to another query.</returns>
     public static bool TryOpen(string token, string fingerprint, out int pageSize, out string storeCursor)
     {
+        return TryOpen(token, fingerprint, out pageSize, out storeCursor, out _);
+    }
+
+    /// <summary>
+    /// Opens a continuation token for a query, including the next row number.
+    /// </summary>
+    /// <param name="token">The token.</param>
+    /// <param name="fingerprint">The fingerprint of the query it is being used with.</param>
+    /// <param name="pageSize">The page size stored in the token.</param>
+    /// <param name="storeCursor">The store cursor.</param>
+    /// <param name="nextRow">The 1-based row number of the first entry on this page.</param>
+    /// <returns><see langword="false"/> when the token is malformed or belongs to another query.</returns>
+    public static bool TryOpen(string token, string fingerprint, out int pageSize, out string storeCursor, out int nextRow)
+    {
         pageSize = 0;
         storeCursor = "";
+        nextRow = 1;
         byte[] bytes;
         try
         {
@@ -788,7 +817,7 @@ public static class ContinuationTokens
             return false;
         }
 
-        if (envelope is null || envelope.V != 1 || envelope.P < 1 || string.IsNullOrEmpty(envelope.C) || string.IsNullOrEmpty(envelope.H) || string.IsNullOrEmpty(envelope.M))
+        if (envelope is null || envelope.V != 1 || envelope.P < 1 || envelope.R < 1 || string.IsNullOrEmpty(envelope.C) || string.IsNullOrEmpty(envelope.H) || string.IsNullOrEmpty(envelope.M))
         {
             return false;
         }
@@ -807,6 +836,7 @@ public static class ContinuationTokens
 
         pageSize = envelope.P > PageRules.PlatformPageSizeMax ? PageRules.PlatformPageSizeMax : envelope.P;
         storeCursor = envelope.C;
+        nextRow = envelope.R;
         return true;
     }
 
@@ -814,7 +844,7 @@ public static class ContinuationTokens
 
     private static byte[]? _key;
 
-    private sealed record Envelope(int V, string H, int P, string C, string M);
+    private sealed record Envelope(int V, string H, int P, string C, int R, string M);
 
     private static string Mac(Envelope envelope)
     {
@@ -823,7 +853,7 @@ public static class ContinuationTokens
             throw new InvalidOperationException("Continuation tokens are not configured.");
         }
 
-        var payload = Encoding.UTF8.GetBytes(envelope.V.ToString(CultureInfo.InvariantCulture) + "|" + envelope.H + "|" + envelope.P.ToString(CultureInfo.InvariantCulture) + "|" + envelope.C);
+        var payload = Encoding.UTF8.GetBytes(envelope.V.ToString(CultureInfo.InvariantCulture) + "|" + envelope.H + "|" + envelope.P.ToString(CultureInfo.InvariantCulture) + "|" + envelope.C + "|" + envelope.R.ToString(CultureInfo.InvariantCulture));
         return Convert.ToHexString(HMACSHA256.HashData(_key, payload));
     }
 

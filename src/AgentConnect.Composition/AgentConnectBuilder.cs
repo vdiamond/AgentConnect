@@ -41,6 +41,7 @@ public static class AgentConnectBuilder
         services.AddSingleton<MemberService>();
         services.AddSingleton<WorkspaceService>();
         services.AddSingleton<ContentService>();
+        services.AddSingleton<BatchService>();
         services.AddSingleton<DeletionService>();
 
         var provider = configuration[$"{AgentConnectOptions.SectionName}:DataProvider"] ?? "Cosmos";
@@ -60,6 +61,7 @@ public static class AgentConnectBuilder
             services.AddSingleton<IListRepository>(sp => sp.GetRequiredService<MemoryDatabase>());
             services.AddSingleton<IItemRepository>(sp => sp.GetRequiredService<MemoryDatabase>());
             services.AddSingleton<IDeletionStore>(sp => sp.GetRequiredService<MemoryDatabase>());
+            services.AddSingleton<IBatchStore>(sp => sp.GetRequiredService<MemoryDatabase>());
         }
         else
         {
@@ -70,6 +72,7 @@ public static class AgentConnectBuilder
             services.AddSingleton<IListRepository>(sp => sp.GetRequiredService<CosmosDatabase>());
             services.AddSingleton<IItemRepository>(sp => sp.GetRequiredService<CosmosDatabase>());
             services.AddSingleton<IDeletionStore>(sp => sp.GetRequiredService<CosmosDatabase>());
+            services.AddSingleton<IBatchStore>(sp => sp.GetRequiredService<CosmosDatabase>());
         }
 
         services.AddSingleton<IEmailSender>(sp =>

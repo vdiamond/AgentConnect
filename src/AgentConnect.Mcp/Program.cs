@@ -22,7 +22,10 @@ public partial class Program
         });
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddAgentConnect(builder.Configuration, builder.Environment);
-        builder.Services.AddMcpServer()
+        builder.Services.AddMcpServer(options =>
+            {
+                options.ServerInstructions = McpCopy.Instructions;
+            })
             .WithHttpTransport(options =>
             {
                 options.Stateless = true;

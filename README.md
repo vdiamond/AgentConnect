@@ -1,6 +1,6 @@
 # AgentConnect
 
-Multi-tenant workspace for agents and people. Agents use the MCP server. People and other systems use the REST API. Both hosts call the same C# libraries. Data is stored in Cosmos DB. This repository implements AgentConnect specification v6.
+Multi-tenant workspace for agents and people. Agents use the MCP server. People and other systems use the REST API. Both hosts call the same C# libraries. Data is stored in Cosmos DB. This repository implements AgentConnect specification v9.
 
 ## Layout
 
@@ -14,7 +14,7 @@ Multi-tenant workspace for agents and people. Agents use the MCP server. People 
 - `src/AgentConnect.Mcp` — MCP Streamable HTTP server, stateless, at `/mcp`
 - `src/AgentConnect.DeletionJob` — one run of background deletion
 - `external/EasyJsonSchema` — submodule, spec v23, commit `91235520bd06f2ce67d14b84dd99af9df686eaa8`
-- `tests/AgentConnect.Tests` — unit and integration tests. Each spec case is marked with a `T` trait (`T-1` … `T-64`)
+- `tests/AgentConnect.Tests` — unit and integration tests. Each spec case is marked with a `T` trait (`T-1` … `T-101`)
 
 ## Build and test
 
@@ -47,4 +47,4 @@ Secrets are environment variables or Container Apps secrets. Do not put them in 
 | `AgentConnect__Email__SenderAddress` | Sender on `azure4smb.com` |
 | `AgentConnect__ApplicationInsights__ConnectionString` | Audit and telemetry |
 
-Cosmos and email access use `ManagedIdentityCredential` for the system-assigned identity. The emulator key is read only from `AGENTCONNECT_COSMOS_KEY` and is never committed. It is used only for a loopback endpoint outside Production, as in the table above. Queries that order by two properties need composite indexes (`created`+`id` and `emailLower`+`id` on Members; `updated`+`id` on Workspaces, Lists, and Items). Members, Workspaces, and Lists also need a unique key policy. Cosmos DB can only set a unique key when the container is created; it cannot be added later. The paths are Members `/emailLower` (partition `/tenantId`), Workspaces `/nameKey` (partition `/tenantId`), and Lists `/nameKey` (partition `/tenantId` and `/workspaceId`). A Members container created for v6 with unique key `/emailKey` and composite index `email`+`id` has to be recreated; that unique key cannot be changed in place. Tenants and Items have no unique key. The emulator tests create those containers, indexes, and unique keys. The application does not create Azure resources.
+Cosmos and email access use `ManagedIdentityCredential` for the system-assigned identity. The emulator key is read only from `AGENTCONNECT_COSMOS_KEY` and is never committed. It is used only for a loopback endpoint outside Production, as in the table above. Queries that order by two properties need composite indexes (`created`+`id`, `emailLower`+`id`, `isTenantOwner`+`id`, and `invitationSent`+`id` on Members; `updated`+`id`, `name`+`id`, and `created`+`id` on Workspaces; `updated`+`id`, `name`+`id`, `schemaVersion`+`id`, and `created`+`id` on Lists; `updated`+`id` on Items). Members, Workspaces, and Lists also need a unique key policy. Cosmos DB can only set a unique key when the container is created; it cannot be added later. The paths are Members `/emailLower` (partition `/tenantId`), Workspaces `/nameKey` (partition `/tenantId`), and Lists `/nameKey` (partition `/tenantId` and `/workspaceId`). A Members container created for v6 with unique key `/emailKey` and composite index `email`+`id` has to be recreated; that unique key cannot be changed in place. Tenants and Items have no unique key. The emulator tests create those containers, indexes, and unique keys. The application does not create Azure resources.

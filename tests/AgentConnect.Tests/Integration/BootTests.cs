@@ -29,8 +29,11 @@ public sealed class BootTests
         Assert.Equal(100, document.RootElement.GetProperty("pageSizeDefault").GetInt32());
         Assert.Equal(1000, document.RootElement.GetProperty("pageSizeMax").GetInt32());
         Assert.True(document.RootElement.GetProperty("emailSent").GetBoolean());
+        var token = document.RootElement.GetProperty("token").GetString();
+        Assert.False(string.IsNullOrEmpty(token));
         var mail = Assert.Single(_platform.Email.For(email));
-        Assert.Contains("Token:", mail.Body, StringComparison.Ordinal);
+        Assert.Equal(token, Session.TokenFrom(mail.Body));
+        Assert.Equal(200, (await _platform.SendAsync(HttpMethod.Get, "/tenant", null, token, admin: false)).Status);
 
         var denied = await _platform.SendAsync(HttpMethod.Post, "/tenants", new { name = "Nope", email = "other@example.com" }, null, admin: false);
         Assert.Equal(401, denied.Status);
