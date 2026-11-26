@@ -47,6 +47,7 @@ public static class ApiEndpoints
         app.MapGet("/workspaces/{id}/lists/{listId}/items/{itemId}", GetItemAsync);
         app.MapPut("/workspaces/{id}/lists/{listId}/items/{itemId}", UpsertItemAsync);
         app.MapDelete("/workspaces/{id}/lists/{listId}/items/{itemId}", DeleteItemAsync);
+        app.MapPost("/batch", BatchAsync);
     }
 
     #region private
@@ -257,8 +258,14 @@ public static class ApiEndpoints
 
     private static async Task ListMembersAsync(HttpContext http, MemberService members)
     {
+        if (!TryCatalog(http, out var where, out var orderBy, out var unknown, out var error))
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(error)).ConfigureAwait(false);
+            return;
+        }
+
         var (size, specified) = PageSize(http);
-        await WriteAsync(http, await members.ListAsync(Caller(http), size, specified, Continuation(http), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        await WriteAsync(http, await members.ListAsync(Caller(http), size, specified, Continuation(http), http.RequestAborted, where, orderBy, unknown)).ConfigureAwait(false);
     }
 
     private static async Task CreateWorkspaceAsync(HttpContext http, WorkspaceService workspaces)
@@ -286,31 +293,33 @@ public static class ApiEndpoints
             return;
         }
 
-        var initial = new List<InitialRole>();
-        if (body.TryGetProperty("members", out var members) && members.ValueKind != JsonValueKind.Null)
-        {
-            if (members.ValueKind != JsonValueKind.Array)
+            var initial = new List<InitialRole>();
+            if (body.TryGetProperty("members", out var members) && members.ValueKind != JsonValueKind.Null)
             {
-                await WriteErrorAsync(http, PlatformError.BadRequest("members: expected array, found " + JsonKinds.Of(members))).ConfigureAwait(false);
-                return;
-            }
-
-            foreach (var entry in members.EnumerateArray())
-            {
-                if (entry.ValueKind != JsonValueKind.Object)
+                if (members.ValueKind != JsonValueKind.Array)
                 {
-                    await WriteErrorAsync(http, PlatformError.BadRequest("members: expected Object, found " + JsonKinds.Of(entry))).ConfigureAwait(false);
+                    await WriteErrorAsync(http, PlatformError.BadRequest("members: expected array, found " + JsonKinds.Of(members))).ConfigureAwait(false);
                     return;
                 }
 
-                if (await UnknownAsync(http, entry, "email", "role").ConfigureAwait(false))
+                var memberIndex = 0;
+                foreach (var entry in members.EnumerateArray())
                 {
-                    return;
-                }
+                    if (entry.ValueKind != JsonValueKind.Object)
+                    {
+                        await WriteErrorAsync(http, PlatformError.BadRequest("members: expected Object, found " + JsonKinds.Of(entry))).ConfigureAwait(false);
+                        return;
+                    }
 
-                initial.Add(new InitialRole(Text(entry, "email"), Text(entry, "role")));
+                    if (await UnknownAtAsync(http, entry, "members[" + memberIndex.ToString(System.Globalization.CultureInfo.InvariantCulture) + "]", "email", "role").ConfigureAwait(false))
+                    {
+                        return;
+                    }
+
+                    initial.Add(new InitialRole(Text(entry, "email"), Text(entry, "role")));
+                    memberIndex++;
+                }
             }
-        }
 
         var result = await workspaces.CreateAsync(Caller(http), name, Text(body, "description"), body.TryGetProperty("description", out _) && body.GetProperty("description").ValueKind != JsonValueKind.Null, initial, http.RequestAborted).ConfigureAwait(false);
         await WriteAsync(http, result).ConfigureAwait(false);
@@ -323,8 +332,14 @@ public static class ApiEndpoints
 
     private static async Task ListWorkspacesAsync(HttpContext http, WorkspaceService workspaces)
     {
+        if (!TryCatalog(http, out var where, out var orderBy, out var unknown, out var error))
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(error)).ConfigureAwait(false);
+            return;
+        }
+
         var (size, specified) = PageSize(http);
-        await WriteAsync(http, await workspaces.ListAsync(Caller(http), size, specified, Continuation(http), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        await WriteAsync(http, await workspaces.ListAsync(Caller(http), size, specified, Continuation(http), http.RequestAborted, where, orderBy, unknown)).ConfigureAwait(false);
     }
 
     private static async Task PatchWorkspaceAsync(HttpContext http, string id, WorkspaceService workspaces)
@@ -357,8 +372,14 @@ public static class ApiEndpoints
 
     private static async Task ListWorkspaceMembersAsync(HttpContext http, string id, MemberService members)
     {
+        if (!TryCatalog(http, out var where, out var orderBy, out var unknown, out var error))
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(error)).ConfigureAwait(false);
+            return;
+        }
+
         var (size, specified) = PageSize(http);
-        await WriteAsync(http, await members.ListWorkspaceMembersAsync(Caller(http), id, size, specified, Continuation(http), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        await WriteAsync(http, await members.ListWorkspaceMembersAsync(Caller(http), id, size, specified, Continuation(http), http.RequestAborted, null, where, orderBy, unknown)).ConfigureAwait(false);
     }
 
     private static async Task AddWorkspaceMemberAsync(HttpContext http, string id, MemberService members)
@@ -492,8 +513,14 @@ public static class ApiEndpoints
 
     private static async Task ListListsAsync(HttpContext http, string id, ContentService content)
     {
+        if (!TryCatalog(http, out var where, out var orderBy, out var unknown, out var error))
+        {
+            await WriteErrorAsync(http, PlatformError.BadRequest(error)).ConfigureAwait(false);
+            return;
+        }
+
         var (size, specified) = PageSize(http);
-        await WriteAsync(http, await content.ListListsAsync(Caller(http), id, size, specified, Continuation(http), http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+        await WriteAsync(http, await content.ListListsAsync(Caller(http), id, size, specified, Continuation(http), http.RequestAborted, null, where, orderBy, unknown)).ConfigureAwait(false);
     }
 
     private static async Task UpdateSchemaAsync(HttpContext http, string id, string listId, ContentService content)
@@ -542,6 +569,36 @@ public static class ApiEndpoints
     private static async Task DeleteItemAsync(HttpContext http, string id, string listId, string itemId, ContentService content)
     {
         await WriteAsync(http, await content.DeleteItemAsync(Caller(http), id, listId, itemId, http.RequestAborted).ConfigureAwait(false)).ConfigureAwait(false);
+    }
+
+    private static async Task BatchAsync(HttpContext http, BatchService batches)
+    {
+        var parsed = await TryObjectAsync(http).ConfigureAwait(false);
+        if (parsed is not JsonElement body)
+        {
+            return;
+        }
+
+        if (await UnknownAsync(http, body, "operations").ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var operations = body.TryGetProperty("operations", out var value) ? value : default;
+        var result = await batches.RunAsync(Caller(http), operations, http.RequestAborted).ConfigureAwait(false);
+        if (result.Error is PlatformError error)
+        {
+            await WriteErrorAsync(http, error).ConfigureAwait(false);
+            return;
+        }
+
+        if (result.Value!.RetryAfter is TimeSpan retry)
+        {
+            http.Response.Headers.RetryAfter = Math.Max(1, (int)Math.Ceiling(retry.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        http.Response.StatusCode = StatusCodes.Status200OK;
+        await http.Response.WriteAsJsonAsync(result.Value, http.RequestAborted).ConfigureAwait(false);
     }
 
     private static async Task<bool> AdminAsync(HttpContext http, AgentConnectOptions options)
@@ -643,7 +700,12 @@ public static class ApiEndpoints
         return value.GetString();
     }
 
-    private static async Task<bool> UnknownAsync(HttpContext http, JsonElement body, params string[] allowed)
+    private static Task<bool> UnknownAsync(HttpContext http, JsonElement body, params string[] allowed)
+    {
+        return UnknownAtAsync(http, body, "", allowed);
+    }
+
+    private static async Task<bool> UnknownAtAsync(HttpContext http, JsonElement body, string prefix, params string[] allowed)
     {
         var name = Unknown(body, allowed);
         if (name is null)
@@ -651,8 +713,15 @@ public static class ApiEndpoints
             return false;
         }
 
-        await WriteErrorAsync(http, PlatformError.BadRequest(name + ": unknown field")).ConfigureAwait(false);
+        var path = prefix.Length == 0 ? name : prefix + "." + name;
+        await WriteErrorAsync(http, PlatformError.BadRequest(path + ": unknown field")).ConfigureAwait(false);
         return true;
+    }
+
+    private static bool TryCatalog(HttpContext http, out JsonElement where, out JsonElement orderBy, out IReadOnlyList<string> unknown, out string error)
+    {
+        var text = http.Request.Query.ContainsKey("query") ? http.Request.Query["query"].ToString() : null;
+        return QueryInput.TryReadCatalog(text, out where, out orderBy, out unknown, out error);
     }
 
     private static string? MemberField(JsonElement body, string name, string missing, string wrongKind, out string? error)

@@ -33,7 +33,13 @@ public sealed class SpecTests
     public async Task AddMember_IsCaseInsensitiveAndIsolated()
     {
         var first = await _session.CreateTenantAsync("One");
-        var email = await _session.AddMemberAsync(first.Token, "ann");
+        var email = "ann-" + Guid.NewGuid().ToString("N")[..8] + "@example.com";
+        var added = await _session.SendAsync(HttpMethod.Post, "/members", new { email }, first.Token);
+        Assert.Equal(200, added.Status);
+        var token = Json(added.Body).GetProperty("token").GetString();
+        Assert.False(string.IsNullOrEmpty(token));
+        Assert.Equal(200, (await _session.SendAsync(HttpMethod.Get, "/workspaces", null, token)).Status);
+        Assert.Empty(_session.Platform.Email.For(email));
         var again = await _session.SendAsync(HttpMethod.Post, "/members", new { email = " " + email.ToUpperInvariant() + " " }, first.Token);
         Assert.Equal(409, again.Status);
         Assert.Equal("email: already exists", Error(again.Body));
@@ -65,6 +71,10 @@ public sealed class SpecTests
 
         var regenerated = await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(email) + "/token/regenerate", new { }, owner.Token);
         Assert.Equal(200, regenerated.Status);
+        var regeneratedToken = Json(regenerated.Body).GetProperty("token").GetString();
+        Assert.False(string.IsNullOrEmpty(regeneratedToken));
+        Assert.NotEqual(JsonValueKind.Undefined, Json(regenerated.Body).GetProperty("lastTokenIssued").ValueKind);
+        Assert.Equal(200, (await _session.SendAsync(HttpMethod.Get, "/workspaces", null, regeneratedToken)).Status);
         var oldCall = await _session.SendAsync(HttpMethod.Get, "/tenant", null, token1);
         Assert.Equal(401, oldCall.Status);
         var tokenMail = await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(email) + "/token/send", new { }, owner.Token);

@@ -26,6 +26,12 @@ public sealed record PlatformError(int StatusCode, string Text, TimeSpan? RetryA
     /// <summary>Gets the 413 <c>$: item too large</c> error.</summary>
     public static PlatformError ItemTooLarge { get; } = new(413, "$: item too large");
 
+    /// <summary>Gets the 413 <c>$: batch too large</c> error. The batch payload exceeds 2 MB. FR-56.</summary>
+    public static PlatformError BatchTooLarge { get; } = new(413, "$: batch too large");
+
+    /// <summary>Gets the 424 <c>$: not applied</c> error. Another operation in the batch failed. FR-56.</summary>
+    public static PlatformError NotApplied { get; } = new(424, "$: not applied");
+
     /// <summary>Gets the 507 <c>$: list storage limit reached</c> error.</summary>
     public static PlatformError ListStorageLimit { get; } = new(507, "$: list storage limit reached");
 

@@ -271,9 +271,9 @@ public sealed class V8SpecTests
         var tools = await client.ListToolsAsync();
         var expected = new Dictionary<string, string[]>(StringComparer.Ordinal)
         {
-            ["list_workspaces"] = ["pageSize", "continuation"],
+            ["list_workspaces"] = ["where", "orderBy", "pageSize", "continuation"],
             ["update_workspace"] = ["workspaceId", "name", "description"],
-            ["list_lists"] = ["workspaceId", "pageSize", "continuation"],
+            ["list_lists"] = ["workspaceId", "where", "orderBy", "pageSize", "continuation"],
             ["create_list"] = ["workspaceId", "name", "description", "schema"],
             ["update_list"] = ["workspaceId", "listId", "name", "description"],
             ["delete_list"] = ["workspaceId", "listId"],
@@ -286,8 +286,10 @@ public sealed class V8SpecTests
             ["invite_member"] = ["workspaceId", "email", "role"],
             ["change_workspace_role"] = ["workspaceId", "email", "role"],
             ["revoke_workspace_access"] = ["workspaceId", "email"],
-            ["list_workspace_members"] = ["workspaceId", "pageSize", "continuation"],
+            ["list_workspace_members"] = ["workspaceId", "where", "orderBy", "pageSize", "continuation"],
             ["set_tenant_owner"] = ["email", "isTenantOwner"],
+            ["query_members"] = ["where", "orderBy", "pageSize", "continuation"],
+            ["batch"] = ["operations"],
         };
         Assert.Equal(expected.Keys.Order(StringComparer.Ordinal), tools.Select(tool => tool.Name).Order(StringComparer.Ordinal));
         foreach (var tool in tools)
@@ -298,12 +300,12 @@ public sealed class V8SpecTests
 
         var created = await _session.Platform.SendAsync(HttpMethod.Post, "/tenants", new { name = "Body", email = "body-" + Guid.NewGuid().ToString("N")[..8] + "@example.com" }, null, admin: true);
         Assert.Equal(200, created.Status);
-        SameKeys(created.Body, "id", "name", "status", "pageSizeDefault", "pageSizeMax", "firstMemberId", "emailSent");
+        SameKeys(created.Body, "id", "name", "status", "pageSizeDefault", "pageSizeMax", "firstMemberId", "token", "emailSent");
         var settings = await _session.SendAsync(HttpMethod.Get, "/tenant", null, owner.Token);
         Assert.Equal(200, settings.Status);
         SameKeys(settings.Body, "pageSizeDefault", "pageSizeMax");
         var member = await _session.SendAsync(HttpMethod.Post, "/members", new { email = "shape-" + Guid.NewGuid().ToString("N")[..8] + "@example.com" }, owner.Token);
-        SameKeys(member.Body, "id", "email", "isTenantOwner", "invitationSent");
+        SameKeys(member.Body, "id", "email", "isTenantOwner", "invitationSent", "token");
         var flagged = await _session.SendAsync(HttpMethod.Put, "/members/" + Uri.EscapeDataString(Json(member.Body).GetProperty("email").GetString()!) + "/tenant-owner", new { isTenantOwner = true }, owner.Token);
         SameKeys(flagged.Body, "id", "email", "isTenantOwner", "invitationSent");
         var workspace = await _session.SendAsync(HttpMethod.Post, "/workspaces", new { name = "Ops", description = "Desk" }, owner.Token);
@@ -481,6 +483,8 @@ public sealed class V8SpecTests
             ("revoke_workspace_access", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["email"] = other, ["foo"] = 1 }),
             ("list_workspace_members", new Dictionary<string, object?> { ["workspaceId"] = workspace, ["foo"] = 1 }),
             ("set_tenant_owner", new Dictionary<string, object?> { ["email"] = other, ["isTenantOwner"] = true, ["foo"] = 1 }),
+            ("query_members", new Dictionary<string, object?> { ["foo"] = 1 }),
+            ("batch", new Dictionary<string, object?> { ["operations"] = Session.Node("[]"), ["foo"] = 1 }),
         };
         foreach (var call in calls)
         {

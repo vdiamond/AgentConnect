@@ -38,12 +38,12 @@ public static class PlatformSupport
 
         if (continuation is not null)
         {
-            if (!ContinuationTokens.TryOpen(continuation, fingerprint, out var size, out var cursor))
+            if (!ContinuationTokens.TryOpen(continuation, fingerprint, out var size, out var cursor, out var nextRow))
             {
                 return OperationResult<PageWindow>.Fail(PlatformError.BadRequest("continuation: invalid token"));
             }
 
-            return OperationResult<PageWindow>.Ok(new PageWindow(size, cursor));
+            return OperationResult<PageWindow>.Ok(new PageWindow(size, cursor, nextRow));
         }
 
         var chosen = !specified || requested is null
@@ -58,15 +58,16 @@ public static class PlatformSupport
     /// <param name="fingerprint">The query fingerprint.</param>
     /// <param name="pageSize">The page size.</param>
     /// <param name="storeCursor">The store cursor, or null.</param>
+    /// <param name="nextRow">The 1-based row number of the first entry on the next page.</param>
     /// <returns>The token, or null.</returns>
-    public static string? Seal(string fingerprint, int pageSize, string? storeCursor)
+    public static string? Seal(string fingerprint, int pageSize, string? storeCursor, int nextRow = 1)
     {
         if (storeCursor is null)
         {
             return null;
         }
 
-        return ContinuationTokens.Issue(fingerprint, pageSize, storeCursor);
+        return ContinuationTokens.Issue(fingerprint, pageSize, storeCursor, nextRow);
     }
 
     /// <summary>
@@ -138,4 +139,5 @@ public static class PlatformSupport
 /// </summary>
 /// <param name="PageSize">The page size.</param>
 /// <param name="Cursor">The store cursor, or null.</param>
-public sealed record PageWindow(int PageSize, string? Cursor);
+/// <param name="RowStart">The 1-based row number of the first entry on this page. FR-57.</param>
+public sealed record PageWindow(int PageSize, string? Cursor, int RowStart = 1);

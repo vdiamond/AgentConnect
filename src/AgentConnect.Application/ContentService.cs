@@ -238,8 +238,11 @@ public sealed class ContentService
     /// <param name="continuation">The continuation token, or null.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
+    /// <param name="where">The where value, or undefined.</param>
+    /// <param name="orderBy">The orderBy value, or undefined.</param>
+    /// <param name="unknown">Unknown query keys.</param>
     /// <returns>The page.</returns>
-    public async Task<OperationResult<ListPageResult>> ListListsAsync(Caller caller, string workspaceId, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<ListPageResult>> ListListsAsync(Caller caller, string workspaceId, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null, JsonElement where = default, JsonElement orderBy = default, IReadOnlyList<string>? unknown = null)
     {
         var gate = await GateAsync(caller, workspaceId, null, PlatformAction.ListLists, false, cancellationToken).ConfigureAwait(false);
         if (gate.Error is not null)
@@ -252,17 +255,45 @@ public sealed class ContentService
             return OperationResult<ListPageResult>.Fail(blocked);
         }
 
-        var fingerprint = "lists|" + caller.Tenant.Id + "|" + workspaceId;
+        var parsed = CatalogQueryParser.Parse(CatalogKind.List, where, orderBy, unknown);
+        if (parsed.Error is not null)
+        {
+            return OperationResult<ListPageResult>.Fail(parsed.Error);
+        }
+
+        var fingerprint = "lists|" + caller.Tenant.Id + "|" + workspaceId + parsed.Value!.Canonical;
         var window = PlatformSupport.OpenPage(caller.Tenant, pageSize, pageSizeSpecified, continuation, fingerprint);
         if (window.Error is not null)
         {
             return OperationResult<ListPageResult>.Fail(window.Error);
         }
 
-        var page = await _lists.ListAsync(caller.Tenant.Id, workspaceId, window.Value!.PageSize, window.Value.Cursor, cancellationToken).ConfigureAwait(false);
+        var query = new CompiledCatalogQuery
+        {
+            Kind = CatalogKind.List,
+            TenantId = caller.Tenant.Id,
+            WorkspaceId = workspaceId,
+            Where = parsed.Value.Where,
+            OrderBy = parsed.Value.OrderBy,
+            DefaultSort = parsed.Value.DefaultSort,
+            PageSize = window.Value!.PageSize,
+            StoreCursor = window.Value.Cursor,
+        };
+        ResultPage<ListDocument> page;
+        try
+        {
+            page = await _lists.QueryAsync(query, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidContinuationException)
+        {
+            return OperationResult<ListPageResult>.Fail(PlatformError.BadRequest("continuation: invalid token"));
+        }
+
+        var views = page.Items.Select(ToView).ToArray();
         return OperationResult<ListPageResult>.Ok(new ListPageResult(
-            page.Items.Select(ToView).ToArray(),
-            PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation)));
+            views,
+            PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation, window.Value.RowStart + views.Length),
+            window.Value.RowStart));
     }
 
     /// <summary>Reads a schema. FR-25.</summary>
@@ -425,7 +456,10 @@ public sealed class ContentService
 
         var includeData = query.Shape == "full";
         var views = page.Items.Select(item => new ItemView(item.Id, item.SchemaVersion, includeData ? ParseElement(item.Data) : null)).ToArray();
-        return OperationResult<ItemPageResult>.Ok(new ItemPageResult(views, PlatformSupport.Seal(query.Fingerprint, query.PageSize, page.Continuation)));
+        return OperationResult<ItemPageResult>.Ok(new ItemPageResult(
+            views,
+            PlatformSupport.Seal(query.Fingerprint, query.PageSize, page.Continuation, window.Value.RowStart + views.Length),
+            window.Value.RowStart));
     }
 
     /// <summary>Reads one item. FR-28.</summary>

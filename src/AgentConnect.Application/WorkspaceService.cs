@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace AgentConnect;
@@ -165,8 +166,11 @@ public sealed class WorkspaceService
     /// <param name="pageSizeSpecified">Whether a page size was sent.</param>
     /// <param name="continuation">The continuation token, or null.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="where">The where value, or undefined.</param>
+    /// <param name="orderBy">The orderBy value, or undefined.</param>
+    /// <param name="unknown">Unknown query keys.</param>
     /// <returns>The page.</returns>
-    public async Task<OperationResult<WorkspacePageResult>> ListAsync(Caller caller, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken)
+    public async Task<OperationResult<WorkspacePageResult>> ListAsync(Caller caller, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken, JsonElement where = default, JsonElement orderBy = default, IReadOnlyList<string>? unknown = null)
     {
         var denied = Permissions.AuthorizeTenant(caller, PlatformAction.ListWorkspaces, null);
         if (denied is not null)
@@ -174,24 +178,72 @@ public sealed class WorkspaceService
             return OperationResult<WorkspacePageResult>.Fail(denied);
         }
 
-        IReadOnlyCollection<string>? visible = caller.IsTenantOwner ? null : caller.Member.WorkspaceRoles.Keys.ToArray();
-        var scope = caller.IsTenantOwner
+        var parsed = CatalogQueryParser.Parse(CatalogKind.Workspace, where, orderBy, unknown);
+        if (parsed.Error is not null)
+        {
+            return OperationResult<WorkspacePageResult>.Fail(parsed.Error);
+        }
+
+        IReadOnlyList<string>? ids = caller.IsTenantOwner ? null : caller.Member.WorkspaceRoles.Keys.ToArray();
+        if (parsed.Value!.RoleWhere.Count > 0)
+        {
+            var matched = new List<string>();
+            foreach (var pair in caller.Member.WorkspaceRoles)
+            {
+                if (CatalogQueryParser.MatchesAll(CatalogQueryParser.Text(StoredRoles.ToApi(pair.Value), false), parsed.Value.RoleWhere))
+                {
+                    matched.Add(pair.Key);
+                }
+            }
+
+            ids = matched;
+        }
+
+        var scope = ids is null
             ? "*"
-            : string.Join(',', caller.Member.WorkspaceRoles.Keys.Order(StringComparer.Ordinal));
-        var fingerprint = "workspaces|" + caller.Tenant.Id + "|" + caller.Member.Id + "|" + scope;
+            : string.Join(',', ids.Order(StringComparer.Ordinal));
+        var fingerprint = "workspaces|" + caller.Tenant.Id + "|" + caller.Member.Id + "|" + scope + parsed.Value.Canonical;
         var window = PlatformSupport.OpenPage(caller.Tenant, pageSize, pageSizeSpecified, continuation, fingerprint);
         if (window.Error is not null)
         {
             return OperationResult<WorkspacePageResult>.Fail(window.Error);
         }
 
-        var page = await _workspaces.ListVisibleAsync(caller.Tenant.Id, visible, window.Value!.PageSize, window.Value.Cursor, cancellationToken).ConfigureAwait(false);
+        if (ids is { Count: 0 })
+        {
+            return OperationResult<WorkspacePageResult>.Ok(new WorkspacePageResult([], null, window.Value!.RowStart));
+        }
+
+        var query = new CompiledCatalogQuery
+        {
+            Kind = CatalogKind.Workspace,
+            TenantId = caller.Tenant.Id,
+            Ids = ids,
+            Where = parsed.Value.Where,
+            OrderBy = parsed.Value.OrderBy,
+            DefaultSort = parsed.Value.DefaultSort,
+            PageSize = window.Value!.PageSize,
+            StoreCursor = window.Value.Cursor,
+        };
+        ResultPage<WorkspaceDocument> page;
+        try
+        {
+            page = await _workspaces.QueryAsync(query, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidContinuationException)
+        {
+            return OperationResult<WorkspacePageResult>.Fail(PlatformError.BadRequest("continuation: invalid token"));
+        }
+
         var views = page.Items.Select(workspace => new WorkspaceView(
             workspace.Id,
             workspace.Name,
             workspace.Description,
             caller.RoleOn(workspace.Id) is string role ? StoredRoles.ToApi(role) : null)).ToArray();
-        return OperationResult<WorkspacePageResult>.Ok(new WorkspacePageResult(views, PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation)));
+        return OperationResult<WorkspacePageResult>.Ok(new WorkspacePageResult(
+            views,
+            PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation, window.Value.RowStart + views.Length),
+            window.Value.RowStart));
     }
 
     /// <summary>Updates general data. FR-18.</summary>

@@ -28,10 +28,15 @@ public sealed class AcsEmailSender : IEmailSender
     public async Task SendAsync(EmailMessage message, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(message);
-        var content = new EmailContent(message.Subject)
+        var content = new EmailContent(message.Subject);
+        if (message.Html)
         {
-            PlainText = message.Body,
-        };
+            content.Html = message.Body;
+        }
+        else
+        {
+            content.PlainText = message.Body;
+        }
         var recipients = new EmailRecipients([new EmailAddress(message.To)]);
         var outbound = new Azure.Communication.Email.EmailMessage(_sender, recipients, content);
         try

@@ -71,7 +71,7 @@ public sealed class CosmosJsonSerializer : CosmosSerializer
 /// <summary>
 /// Cosmos DB implementation of the section 5 containers. The client uses managed identity.
 /// </summary>
-public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWorkspaceRepository, IListRepository, IItemRepository, IDeletionStore, IDisposable
+public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWorkspaceRepository, IListRepository, IItemRepository, IDeletionStore, IBatchStore, IDisposable
 {
     /// <summary>
     /// Initializes a new instance of the <see cref="CosmosDatabase"/> class.
@@ -294,6 +294,76 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
     }
 
     /// <inheritdoc />
+    Task<ResultPage<MemberDocument>> IMemberRepository.QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken)
+    {
+        return QueryAsync<MemberDocument>(Members, CatalogSql.Build(query), new PartitionKey(query.TenantId), query.PageSize, query.StoreCursor, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    Task<ResultPage<WorkspaceDocument>> IWorkspaceRepository.QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken)
+    {
+        if (query.Ids is { Count: 0 })
+        {
+            return Task.FromResult(new ResultPage<WorkspaceDocument>());
+        }
+
+        return QueryAsync<WorkspaceDocument>(Workspaces, CatalogSql.Build(query), new PartitionKey(query.TenantId), query.PageSize, query.StoreCursor, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    Task<ResultPage<ListDocument>> IListRepository.QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken)
+    {
+        return QueryAsync<ListDocument>(Lists, CatalogSql.Build(query), ListKey(query.TenantId, query.WorkspaceId ?? ""), query.PageSize, query.StoreCursor, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async Task CommitAsync(BatchCommit commit, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(commit);
+        var (container, key) = BatchTarget(commit);
+        var batch = container.CreateTransactionalBatch(key);
+        foreach (var change in commit.Changes)
+        {
+            switch (commit.Container)
+            {
+                case "member":
+                {
+                    AddMember(batch, change);
+                    break;
+                }
+                case "workspace":
+                {
+                    AddWorkspace(batch, change);
+                    break;
+                }
+                case "list":
+                {
+                    AddList(batch, change);
+                    break;
+                }
+                default:
+                {
+                    AddItem(batch, change);
+                    break;
+                }
+            }
+        }
+
+        try
+        {
+            using var response = await batch.ExecuteAsync(cancellationToken).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode)
+            {
+                throw BatchFailure(response);
+            }
+        }
+        catch (CosmosException exception)
+        {
+            throw Map(exception);
+        }
+    }
+
+    /// <inheritdoc />
     public Task<ResultPage<ItemDocument>> QueryAsync(CompiledItemQuery query, CancellationToken cancellationToken)
     {
         return QueryAsync<ItemDocument>(Items, CosmosQuerySql.Build(query), ItemKey(query.TenantId, query.WorkspaceId, query.ListId), query.PageSize, query.StoreCursor, cancellationToken);
@@ -350,8 +420,15 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
         await CreateContainerAsync(database.Database, _options.TenantContainer, ["/id"], [], null, cancellationToken).ConfigureAwait(false);
         await CreateContainerAsync(database.Database, _options.MemberContainer, ["/tenantId"], ["/created", "/id"], "/emailLower", cancellationToken).ConfigureAwait(false);
         await AddCompositeAsync(database.Database, _options.MemberContainer, ["/emailLower", "/id"], cancellationToken).ConfigureAwait(false);
+        await AddCompositeAsync(database.Database, _options.MemberContainer, ["/isTenantOwner", "/id"], cancellationToken).ConfigureAwait(false);
+        await AddCompositeAsync(database.Database, _options.MemberContainer, ["/invitationSent", "/id"], cancellationToken).ConfigureAwait(false);
         await CreateContainerAsync(database.Database, _options.WorkspaceContainer, ["/tenantId"], ["/updated", "/id"], "/nameKey", cancellationToken).ConfigureAwait(false);
+        await AddCompositeAsync(database.Database, _options.WorkspaceContainer, ["/name", "/id"], cancellationToken).ConfigureAwait(false);
+        await AddCompositeAsync(database.Database, _options.WorkspaceContainer, ["/created", "/id"], cancellationToken).ConfigureAwait(false);
         await CreateContainerAsync(database.Database, _options.ListContainer, ["/tenantId", "/workspaceId"], ["/updated", "/id"], "/nameKey", cancellationToken).ConfigureAwait(false);
+        await AddCompositeAsync(database.Database, _options.ListContainer, ["/name", "/id"], cancellationToken).ConfigureAwait(false);
+        await AddCompositeAsync(database.Database, _options.ListContainer, ["/schemaVersion", "/id"], cancellationToken).ConfigureAwait(false);
+        await AddCompositeAsync(database.Database, _options.ListContainer, ["/created", "/id"], cancellationToken).ConfigureAwait(false);
         await CreateContainerAsync(database.Database, _options.ItemContainer, ["/tenantId", "/workspaceId", "/listId"], ["/updated", "/id"], null, cancellationToken).ConfigureAwait(false);
     }
 
@@ -384,6 +461,119 @@ public sealed class CosmosDatabase : ITenantRepository, IMemberRepository, IWork
     private static PartitionKey ItemKey(string tenantId, string workspaceId, string listId)
     {
         return new PartitionKeyBuilder().Add(tenantId).Add(workspaceId).Add(listId).Build();
+    }
+
+    private (Container Container, PartitionKey Key) BatchTarget(BatchCommit commit)
+    {
+        var first = commit.Changes[0];
+        return commit.Container switch
+        {
+            "member" => (Members, new PartitionKey(first.Member!.TenantId)),
+            "workspace" => (Workspaces, new PartitionKey(first.Workspace!.TenantId)),
+            "list" => (Lists, ListKey(first.List!.TenantId, first.List.WorkspaceId)),
+            _ => (Items, ItemKey(first.Item!.TenantId, first.Item.WorkspaceId, first.Item.ListId)),
+        };
+    }
+
+    private static void AddMember(TransactionalBatch batch, BatchChange change)
+    {
+        var member = change.Member!;
+        member.StampKey();
+        switch (change.Action)
+        {
+            case "delete":
+            {
+                batch.DeleteItem(member.Id, Match(member.ETag));
+                break;
+            }
+            case "replace":
+            {
+                batch.ReplaceItem(member.Id, member, Match(member.ETag));
+                break;
+            }
+            default:
+            {
+                batch.CreateItem(member);
+                break;
+            }
+        }
+    }
+
+    private static void AddWorkspace(TransactionalBatch batch, BatchChange change)
+    {
+        var workspace = change.Workspace!;
+        workspace.StampKey();
+        if (change.Action == "create")
+        {
+            batch.CreateItem(workspace);
+            return;
+        }
+
+        batch.ReplaceItem(workspace.Id, workspace, Match(workspace.ETag));
+    }
+
+    private static void AddList(TransactionalBatch batch, BatchChange change)
+    {
+        var list = change.List!;
+        list.StampKey();
+        if (change.Action == "create")
+        {
+            batch.CreateItem(list);
+            return;
+        }
+
+        batch.ReplaceItem(list.Id, list, Match(list.ETag));
+    }
+
+    private static void AddItem(TransactionalBatch batch, BatchChange change)
+    {
+        var item = change.Item!;
+        if (change.Action == "delete")
+        {
+            batch.DeleteItem(item.Id);
+            return;
+        }
+
+        batch.UpsertItem(item);
+    }
+
+    private static Exception BatchFailure(TransactionalBatchResponse response)
+    {
+        var retry = response.RetryAfter ?? TimeSpan.FromSeconds(1);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests)
+        {
+            return new StorageThrottleException(retry);
+        }
+
+        if (response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.ServiceUnavailable)
+        {
+            return new StorageUnavailableException(retry);
+        }
+
+        if (response.StatusCode == HttpStatusCode.PreconditionFailed)
+        {
+            return new StorageConflictException();
+        }
+
+        if (response.StatusCode == HttpStatusCode.RequestEntityTooLarge)
+        {
+            return new StorageTooLargeException();
+        }
+
+        if (response.StatusCode == HttpStatusCode.Conflict)
+        {
+            return new DuplicateValueException();
+        }
+
+        return new StorageFailureException((int)response.StatusCode, 0, response.ActivityId);
+    }
+
+    private static TransactionalBatchItemRequestOptions Match(string? etag)
+    {
+        return new TransactionalBatchItemRequestOptions
+        {
+            IfMatchEtag = etag,
+        };
     }
 
     private static async Task<T?> ReadAsync<T>(Container container, string id, PartitionKey key, CancellationToken cancellationToken)

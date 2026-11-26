@@ -8,7 +8,7 @@ using ModelContextProtocol.Server;
 namespace AgentConnect;
 
 /// <summary>
-/// The 17 MCP tools from FR-33. They call the same services as the REST API.
+/// The 19 MCP tools from FR-33. They call the same services as the REST API.
 /// </summary>
 [McpServerToolType]
 public sealed class AgentConnectTools
@@ -20,29 +20,36 @@ public sealed class AgentConnectTools
     /// <param name="workspaces">The workspaces.</param>
     /// <param name="members">The members.</param>
     /// <param name="content">The lists and items.</param>
+    /// <param name="batches">The batches.</param>
     /// <param name="logger">The logger.</param>
-    public AgentConnectTools(IHttpContextAccessor http, WorkspaceService workspaces, MemberService members, ContentService content, ILogger<AgentConnectTools> logger)
+    public AgentConnectTools(IHttpContextAccessor http, WorkspaceService workspaces, MemberService members, ContentService content, BatchService batches, ILogger<AgentConnectTools> logger)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(workspaces);
         ArgumentNullException.ThrowIfNull(members);
         ArgumentNullException.ThrowIfNull(content);
+        ArgumentNullException.ThrowIfNull(batches);
         ArgumentNullException.ThrowIfNull(logger);
         _http = http;
         _workspaces = workspaces;
         _members = members;
         _content = content;
+        _batches = batches;
         _logger = logger;
     }
 
     /// <summary>Lists the workspaces the caller can see.</summary>
+    /// <param name="where">The filter, as raw JSON.</param>
+    /// <param name="orderBy">The sort, as raw JSON.</param>
     /// <param name="pageSize">The page size, as raw JSON.</param>
     /// <param name="continuation">The continuation token, as raw JSON.</param>
     /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
-    [McpServerTool(Name = "list_workspaces"), Description("Lists the workspaces the caller can see, with the caller's role in each.")]
+    [McpServerTool(Name = "list_workspaces"), Description(McpCopy.ListWorkspaces)]
     public async Task<CallToolResult> ListWorkspaces(
+        JsonElement? where = null,
+        JsonElement? orderBy = null,
         JsonElement? pageSize = null,
         JsonElement? continuation = null,
         RequestContext<CallToolRequestParams>? request = null,
@@ -54,13 +61,13 @@ public sealed class AgentConnectTools
             return Error(PlatformError.InvalidToken);
         }
 
-        if (Extra(request, "pageSize", "continuation") is { } extra)
+        if (Extra(request, "where", "orderBy", "pageSize", "continuation") is { } extra)
         {
             return extra;
         }
 
         var (size, specified, token) = Page(request, pageSize, continuation);
-        return ToResult(await Guarded(() => _workspaces.ListAsync(caller, size, specified, token, cancellationToken)).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _workspaces.ListAsync(caller, size, specified, token, cancellationToken, Given(request, "where", where), Given(request, "orderBy", orderBy))).ConfigureAwait(false));
     }
 
     /// <summary>Updates a workspace name and description.</summary>
@@ -70,7 +77,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The workspace.</returns>
-    [McpServerTool(Name = "update_workspace"), Description("Updates a workspace's name and description.")]
+    [McpServerTool(Name = "update_workspace"), Description(McpCopy.UpdateWorkspace)]
     public async Task<CallToolResult> UpdateWorkspace(
         JsonElement? workspaceId = null,
         JsonElement? name = null,
@@ -106,14 +113,18 @@ public sealed class AgentConnectTools
 
     /// <summary>Lists the lists in a workspace.</summary>
     /// <param name="workspaceId">The workspace id.</param>
+    /// <param name="where">The filter, as raw JSON.</param>
+    /// <param name="orderBy">The sort, as raw JSON.</param>
     /// <param name="pageSize">The page size, as raw JSON.</param>
     /// <param name="continuation">The continuation token, as raw JSON.</param>
     /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
-    [McpServerTool(Name = "list_lists"), Description("Lists the lists in a workspace.")]
+    [McpServerTool(Name = "list_lists"), Description(McpCopy.ListLists)]
     public async Task<CallToolResult> ListLists(
         JsonElement? workspaceId = null,
+        JsonElement? where = null,
+        JsonElement? orderBy = null,
         JsonElement? pageSize = null,
         JsonElement? continuation = null,
         RequestContext<CallToolRequestParams>? request = null,
@@ -131,7 +142,7 @@ public sealed class AgentConnectTools
         }
 
         var (size, specified, token) = Page(request, pageSize, continuation);
-        return ToResult(await Guarded(() => _content.ListListsAsync(caller, workspaceText, size, specified, token, cancellationToken, UnknownAfterGate(request, "workspaceId", "pageSize", "continuation"))).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _content.ListListsAsync(caller, workspaceText, size, specified, token, cancellationToken, UnknownAfterGate(request, "workspaceId", "where", "orderBy", "pageSize", "continuation"), Given(request, "where", where), Given(request, "orderBy", orderBy))).ConfigureAwait(false));
     }
 
     /// <summary>Creates a list.</summary>
@@ -142,7 +153,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The list.</returns>
-    [McpServerTool(Name = "create_list"), Description("Creates a list with an EasyJsonSchema schema.")]
+    [McpServerTool(Name = "create_list"), Description(McpCopy.CreateList)]
     public async Task<CallToolResult> CreateList(
         JsonElement? workspaceId = null,
         JsonElement? name = null,
@@ -192,7 +203,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The list.</returns>
-    [McpServerTool(Name = "update_list"), Description("Updates a list's name or description.")]
+    [McpServerTool(Name = "update_list"), Description(McpCopy.UpdateList)]
     public async Task<CallToolResult> UpdateList(
         JsonElement? workspaceId = null,
         JsonElement? listId = null,
@@ -234,7 +245,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The confirmation.</returns>
-    [McpServerTool(Name = "delete_list"), Description("Deletes a list. Its items are removed in the background.")]
+    [McpServerTool(Name = "delete_list"), Description(McpCopy.DeleteList)]
     public async Task<CallToolResult> DeleteList(JsonElement? workspaceId = null, JsonElement? listId = null, RequestContext<CallToolRequestParams>? request = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
@@ -258,7 +269,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The schema.</returns>
-    [McpServerTool(Name = "get_schema"), Description("Reads a list's current schema and schema version.")]
+    [McpServerTool(Name = "get_schema"), Description(McpCopy.GetSchema)]
     public async Task<CallToolResult> GetSchema(JsonElement? workspaceId = null, JsonElement? listId = null, RequestContext<CallToolRequestParams>? request = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
@@ -283,7 +294,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The new version.</returns>
-    [McpServerTool(Name = "update_schema"), Description("Supplies a new schema. The list version increases by 1.")]
+    [McpServerTool(Name = "update_schema"), Description(McpCopy.UpdateSchema)]
     public async Task<CallToolResult> UpdateSchema(
         JsonElement? workspaceId = null,
         JsonElement? listId = null,
@@ -318,7 +329,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
-    [McpServerTool(Name = "query_items"), Description("Queries the items of one list.")]
+    [McpServerTool(Name = "query_items"), Description(McpCopy.QueryItems)]
     public async Task<CallToolResult> QueryItems(
         JsonElement? workspaceId = null,
         JsonElement? listId = null,
@@ -368,7 +379,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The item.</returns>
-    [McpServerTool(Name = "get_item"), Description("Reads one item. Reads do not re-validate.")]
+    [McpServerTool(Name = "get_item"), Description(McpCopy.GetItem)]
     public async Task<CallToolResult> GetItem(JsonElement? workspaceId = null, JsonElement? listId = null, JsonElement? itemId = null, RequestContext<CallToolRequestParams>? request = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
@@ -396,7 +407,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The id and schema version.</returns>
-    [McpServerTool(Name = "upsert_item"), Description("Creates or replaces an item. The JSON is validated against the current schema.")]
+    [McpServerTool(Name = "upsert_item"), Description(McpCopy.UpsertItem)]
     public async Task<CallToolResult> UpsertItem(
         JsonElement? workspaceId = null,
         JsonElement? listId = null,
@@ -453,7 +464,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The confirmation.</returns>
-    [McpServerTool(Name = "delete_item"), Description("Deletes an item.")]
+    [McpServerTool(Name = "delete_item"), Description(McpCopy.DeleteItem)]
     public async Task<CallToolResult> DeleteItem(JsonElement? workspaceId = null, JsonElement? listId = null, JsonElement? itemId = null, RequestContext<CallToolRequestParams>? request = null, CancellationToken cancellationToken = default)
     {
         var caller = Caller();
@@ -480,7 +491,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The assignment, including emailSent.</returns>
-    [McpServerTool(Name = "invite_member"), Description("Adds an email to a workspace and sends the matching email.")]
+    [McpServerTool(Name = "invite_member"), Description(McpCopy.InviteMember)]
     public async Task<CallToolResult> InviteMember(
         JsonElement? workspaceId = null,
         JsonElement? email = null,
@@ -519,7 +530,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The role.</returns>
-    [McpServerTool(Name = "change_workspace_role"), Description("Changes a member's role in a workspace.")]
+    [McpServerTool(Name = "change_workspace_role"), Description(McpCopy.ChangeWorkspaceRole)]
     public async Task<CallToolResult> ChangeWorkspaceRole(
         JsonElement? workspaceId = null,
         JsonElement? email = null,
@@ -557,7 +568,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The confirmation.</returns>
-    [McpServerTool(Name = "revoke_workspace_access"), Description("Removes a member's role in a workspace. The member stays in the tenant.")]
+    [McpServerTool(Name = "revoke_workspace_access"), Description(McpCopy.RevokeWorkspaceAccess)]
     public async Task<CallToolResult> RevokeWorkspaceAccess(
         JsonElement? workspaceId = null,
         JsonElement? email = null,
@@ -585,14 +596,18 @@ public sealed class AgentConnectTools
 
     /// <summary>Lists workspace members.</summary>
     /// <param name="workspaceId">The workspace id.</param>
+    /// <param name="where">The filter, as raw JSON.</param>
+    /// <param name="orderBy">The sort, as raw JSON.</param>
     /// <param name="pageSize">The page size, as raw JSON.</param>
     /// <param name="continuation">The continuation token, as raw JSON.</param>
     /// <param name="request">The raw call. An explicit JSON null is not treated as omitted.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
-    [McpServerTool(Name = "list_workspace_members"), Description("Lists the members who hold a role on a workspace.")]
+    [McpServerTool(Name = "list_workspace_members"), Description(McpCopy.ListWorkspaceMembers)]
     public async Task<CallToolResult> ListWorkspaceMembers(
         JsonElement? workspaceId = null,
+        JsonElement? where = null,
+        JsonElement? orderBy = null,
         JsonElement? pageSize = null,
         JsonElement? continuation = null,
         RequestContext<CallToolRequestParams>? request = null,
@@ -610,7 +625,7 @@ public sealed class AgentConnectTools
         }
 
         var (size, specified, token) = Page(request, pageSize, continuation);
-        return ToResult(await Guarded(() => _members.ListWorkspaceMembersAsync(caller, workspaceText, size, specified, token, cancellationToken, UnknownAfterGate(request, "workspaceId", "pageSize", "continuation"))).ConfigureAwait(false));
+        return ToResult(await Guarded(() => _members.ListWorkspaceMembersAsync(caller, workspaceText, size, specified, token, cancellationToken, UnknownAfterGate(request, "workspaceId", "where", "orderBy", "pageSize", "continuation"), Given(request, "where", where), Given(request, "orderBy", orderBy))).ConfigureAwait(false));
     }
 
     /// <summary>Sets or clears the TenantOwner flag. FR-9.</summary>
@@ -619,7 +634,7 @@ public sealed class AgentConnectTools
     /// <param name="request">The raw call, used to reject unknown arguments.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The member.</returns>
-    [McpServerTool(Name = "set_tenant_owner"), Description("Gives or removes the TenantOwner flag. A TenantOwner cannot change their own flag.")]
+    [McpServerTool(Name = "set_tenant_owner"), Description(McpCopy.SetTenantOwner)]
     public async Task<CallToolResult> SetTenantOwner(
         JsonElement? email = null,
         JsonElement? isTenantOwner = null,
@@ -656,6 +671,58 @@ public sealed class AgentConnectTools
         return ToResult(await Guarded(() => _members.SetTenantOwnerAsync(caller, emailText, flag.GetBoolean(), cancellationToken, UnknownAfterGate(request, "email", "isTenantOwner"))).ConfigureAwait(false));
     }
 
+    /// <summary>Lists the tenant's members. FR-8 and FR-55.</summary>
+    /// <param name="where">The filter.</param>
+    /// <param name="orderBy">The sort.</param>
+    /// <param name="pageSize">The page size.</param>
+    /// <param name="continuation">The continuation token.</param>
+    /// <param name="request">The raw call.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page.</returns>
+    [McpServerTool(Name = "query_members"), Description(McpCopy.QueryMembers)]
+    public async Task<CallToolResult> QueryMembers(
+        JsonElement? where = null,
+        JsonElement? orderBy = null,
+        JsonElement? pageSize = null,
+        JsonElement? continuation = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
+    {
+        var caller = Caller();
+        if (caller is null)
+        {
+            return Error(PlatformError.InvalidToken);
+        }
+
+        var (size, specified, token) = Page(request, pageSize, continuation);
+        return ToResult(await Guarded(() => _members.ListAsync(caller, size, specified, token, cancellationToken, Given(request, "where", where), Given(request, "orderBy", orderBy), null, UnknownAfterGate(request, "where", "orderBy", "pageSize", "continuation"))).ConfigureAwait(false));
+    }
+
+    /// <summary>Runs one batch. FR-56.</summary>
+    /// <param name="operations">The operations.</param>
+    /// <param name="request">The raw call.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The results.</returns>
+    [McpServerTool(Name = "batch"), Description(McpCopy.Batch)]
+    public async Task<CallToolResult> Batch(
+        JsonElement? operations = null,
+        RequestContext<CallToolRequestParams>? request = null,
+        CancellationToken cancellationToken = default)
+    {
+        var caller = Caller();
+        if (caller is null)
+        {
+            return Error(PlatformError.InvalidToken);
+        }
+
+        if (Extra(request, "operations") is { } extra)
+        {
+            return extra;
+        }
+
+        return ToResult(await Guarded(() => _batches.RunAsync(caller, Read(request, "operations", operations), cancellationToken)).ConfigureAwait(false));
+    }
+
     #region private
 
     private static readonly JsonSerializerOptions Json = new()
@@ -668,6 +735,7 @@ public sealed class AgentConnectTools
     private readonly WorkspaceService _workspaces;
     private readonly MemberService _members;
     private readonly ContentService _content;
+    private readonly BatchService _batches;
     private readonly ILogger _logger;
 
     private static JsonElement Read(RequestContext<CallToolRequestParams>? request, string name, JsonElement? bound)
@@ -889,8 +957,62 @@ public sealed class AgentConnectTools
         return new CallToolResult
         {
             IsError = false,
-            Content = [new TextContentBlock { Text = JsonSerializer.Serialize(result.Value, Json) }],
+            Content = [new TextContentBlock { Text = AddRows(result.Value, JsonSerializer.Serialize(result.Value, Json)) }],
         };
+    }
+
+    private static string AddRows<T>(T value, string json)
+    {
+        var (name, start) = value switch
+        {
+            WorkspacePageResult page => ("workspaces", page.RowStart),
+            ListPageResult page => ("lists", page.RowStart),
+            ItemPageResult page => ("items", page.RowStart),
+            MemberPageResult page => ("members", page.RowStart),
+            WorkspaceMemberPageResult page => ("members", page.RowStart),
+            _ => ((string?)null, 0),
+        };
+        if (name is null)
+        {
+            return json;
+        }
+
+        using var document = JsonDocument.Parse(json);
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!property.NameEquals(name))
+                {
+                    property.WriteTo(writer);
+                    continue;
+                }
+
+                writer.WritePropertyName(name);
+                writer.WriteStartArray();
+                var row = start;
+                foreach (var entry in property.Value.EnumerateArray())
+                {
+                    writer.WriteStartObject();
+                    foreach (var field in entry.EnumerateObject())
+                    {
+                        field.WriteTo(writer);
+                    }
+
+                    writer.WriteNumber("row", row);
+                    row++;
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndArray();
+            }
+
+            writer.WriteEndObject();
+        }
+
+        return System.Text.Encoding.UTF8.GetString(stream.ToArray());
     }
 
     private static CallToolResult Error(PlatformError error)

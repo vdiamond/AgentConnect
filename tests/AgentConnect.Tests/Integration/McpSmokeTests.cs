@@ -1,6 +1,4 @@
-using System.Text.Json;
 using AgentConnect.Tests.Support;
-using ModelContextProtocol.Protocol;
 
 namespace AgentConnect.Tests.Integration;
 
@@ -16,18 +14,19 @@ public sealed class McpSmokeTests
 
     [Fact]
     [Trait("T", "T-26")]
-    public async Task Mcp_ExposesTheSeventeenTools()
+    public async Task Mcp_ExposesTheNineteenTools()
     {
         var email = "mcp-owner@example.com";
         var created = await _platform.SendAsync(HttpMethod.Post, "/tenants", new { name = "Mcp", email }, null, admin: true);
         Assert.Equal(200, created.Status);
-        var token = Token(Assert.Single(_platform.Email.For(email)).Body);
+        var token = Session.TokenFrom(Assert.Single(_platform.Email.For(email)).Body);
         await using var client = await _platform.McpClientAsync(token);
         var tools = await client.ListToolsAsync();
         var names = tools.Select(tool => tool.Name).Order(StringComparer.Ordinal).ToArray();
         Assert.Equal(
             new[]
             {
+                "batch",
                 "change_workspace_role",
                 "create_list",
                 "delete_item",
@@ -39,6 +38,7 @@ public sealed class McpSmokeTests
                 "list_workspace_members",
                 "list_workspaces",
                 "query_items",
+                "query_members",
                 "revoke_workspace_access",
                 "set_tenant_owner",
                 "update_list",
@@ -47,18 +47,5 @@ public sealed class McpSmokeTests
                 "upsert_item",
             },
             names);
-    }
-
-    private static string Token(string body)
-    {
-        foreach (var line in body.Split('\n'))
-        {
-            if (line.StartsWith("Token: ", StringComparison.Ordinal))
-            {
-                return line["Token: ".Length..].Trim();
-            }
-        }
-
-        throw new InvalidOperationException(body);
     }
 }

@@ -92,7 +92,7 @@ public sealed class MoreSpecTests
         });
         Assert.False(access.IsError);
         Assert.DoesNotContain("Token:", _session.Platform.Email.For(known).Last().Body, StringComparison.Ordinal);
-        Assert.Equal(before, Session.TokenFrom((await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(known) + "/token/send", new { }, owner.Token)).Body is string _ ? _session.Platform.Email.For(known).Last(mail => mail.Body.Contains("Token:", StringComparison.Ordinal)).Body : ""));
+        Assert.Equal(before, Session.TokenFrom((await _session.SendAsync(HttpMethod.Post, "/members/" + Uri.EscapeDataString(known) + "/token/send", new { }, owner.Token)).Body is string _ ? _session.Platform.Email.For(known).Last(mail => mail.ContainsToken).Body : ""));
 
         var writeToken = Session.TokenFrom(_session.Platform.Email.For(fresh).Last().Body);
         Assert.Equal(200, (await _session.SendAsync(HttpMethod.Get, "/workspaces/" + workspace + "/lists", null, writeToken)).Status);

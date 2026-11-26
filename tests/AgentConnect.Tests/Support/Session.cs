@@ -84,15 +84,12 @@ public sealed class Session
     /// <returns>The token.</returns>
     public static string TokenFrom(string body)
     {
-        foreach (var line in body.Split('\n'))
+        if (EmailTemplates.TryReadToken(body, out var token))
         {
-            if (line.StartsWith("Token: ", StringComparison.Ordinal))
-            {
-                return line["Token: ".Length..].Trim();
-            }
+            return token;
         }
 
-        throw new InvalidOperationException(body);
+        throw new InvalidOperationException("The email has no token cell.");
     }
 
     #region private

@@ -229,6 +229,12 @@ public interface IMemberRepository
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The page.</returns>
     Task<ResultPage<MemberDocument>> ListByWorkspaceAsync(string tenantId, string workspaceId, int pageSize, string? cursor, CancellationToken cancellationToken);
+
+    /// <summary>Runs an FR-55 member query inside the tenant partition.</summary>
+    /// <param name="query">The query.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page.</returns>
+    Task<ResultPage<MemberDocument>> QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -278,6 +284,12 @@ public interface IWorkspaceRepository
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>True when the name is taken.</returns>
     Task<bool> NameExistsAsync(string tenantId, string name, string? exceptId, CancellationToken cancellationToken);
+
+    /// <summary>Runs an FR-55 workspace query inside the tenant partition.</summary>
+    /// <param name="query">The query.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page.</returns>
+    Task<ResultPage<WorkspaceDocument>> QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -330,6 +342,12 @@ public interface IListRepository
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>True when the name is taken.</returns>
     Task<bool> NameExistsAsync(string tenantId, string workspaceId, string name, string? exceptId, CancellationToken cancellationToken);
+
+    /// <summary>Runs an FR-55 list query inside one workspace partition.</summary>
+    /// <param name="query">The query.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The page.</returns>
+    Task<ResultPage<ListDocument>> QueryAsync(CompiledCatalogQuery query, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -380,6 +398,49 @@ public interface IDeletionStore
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>How many documents were removed. Zero means nothing remains.</returns>
     Task<int> DeleteNextBatchAsync(int batchSize, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Applies one FR-56 batch atomically inside one container and one partition.
+/// </summary>
+public interface IBatchStore
+{
+    /// <summary>
+    /// Applies every change, or none of them.
+    /// </summary>
+    /// <param name="commit">The changes, already validated.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task.</returns>
+    Task CommitAsync(BatchCommit commit, CancellationToken cancellationToken);
+}
+
+/// <summary>One all-or-nothing batch write. FR-56.</summary>
+public sealed class BatchCommit
+{
+    /// <summary>Gets the container: <c>member</c>, <c>workspace</c>, <c>list</c>, or <c>item</c>.</summary>
+    public required string Container { get; init; }
+
+    /// <summary>Gets the changes in order.</summary>
+    public required IReadOnlyList<BatchChange> Changes { get; init; }
+}
+
+/// <summary>One change inside a <see cref="BatchCommit"/>.</summary>
+public sealed class BatchChange
+{
+    /// <summary>Gets <c>create</c>, <c>replace</c>, <c>upsert</c>, or <c>delete</c>.</summary>
+    public required string Action { get; init; }
+
+    /// <summary>Gets the member, when <see cref="BatchCommit.Container"/> is <c>member</c>.</summary>
+    public MemberDocument? Member { get; init; }
+
+    /// <summary>Gets the workspace, when the container is <c>workspace</c>.</summary>
+    public WorkspaceDocument? Workspace { get; init; }
+
+    /// <summary>Gets the list, when the container is <c>list</c>.</summary>
+    public ListDocument? List { get; init; }
+
+    /// <summary>Gets the item, when the container is <c>item</c>.</summary>
+    public ItemDocument? Item { get; init; }
 }
 
 /// <summary>

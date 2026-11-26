@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 
 namespace AgentConnect;
@@ -74,14 +75,14 @@ public sealed class MemberService
             return OperationResult<MemberResult>.Fail(PlatformError.Conflict("email: already exists"));
         }
 
-        var member = CreateMember(caller.Tenant.Id, normalized, false);
+        var (member, token) = CreateMember(caller.Tenant.Id, normalized, false);
         var duplicate = await Unique.CreateAsync(ct => _members.CreateAsync(member, ct), "email: already exists", cancellationToken).ConfigureAwait(false);
         if (duplicate is not null)
         {
             return OperationResult<MemberResult>.Fail(duplicate);
         }
         Audit(caller.Member.Id, AuditActions.MemberAdded, ("tenantId", caller.Tenant.Id), ("memberId", member.Id));
-        return OperationResult<MemberResult>.Ok(ToResult(member));
+        return OperationResult<MemberResult>.Ok(new MemberResult(member.Id, member.Email, member.IsTenantOwner, member.InvitationSent, token));
     }
 
     /// <summary>Sends or resends the invitation. The token does not change. FR-3.</summary>
@@ -140,7 +141,7 @@ public sealed class MemberService
             current.LastTokenIssued = PlatformSupport.After(_clock.UtcNow, current.LastTokenSent);
         }, cancellationToken).ConfigureAwait(false);
         Audit(caller.Member.Id, AuditActions.TokenRegenerated, ("tenantId", caller.Tenant.Id), ("memberId", stored.Id));
-        return OperationResult<TokenRegeneratedResult>.Ok(new TokenRegeneratedResult(stored.LastTokenIssued));
+        return OperationResult<TokenRegeneratedResult>.Ok(new TokenRegeneratedResult(stored.LastTokenIssued, issued.Token));
     }
 
     /// <summary>Emails the stored token. FR-7.</summary>
@@ -183,8 +184,12 @@ public sealed class MemberService
     /// <param name="pageSizeSpecified">Whether a page size was sent.</param>
     /// <param name="continuation">The continuation token, or null.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
+    /// <param name="where">The where value, or undefined.</param>
+    /// <param name="orderBy">The orderBy value, or undefined.</param>
+    /// <param name="unknown">Unknown query keys.</param>
+    /// <param name="afterGate">A check that runs after access is allowed.</param>
     /// <returns>The page.</returns>
-    public async Task<OperationResult<MemberPageResult>> ListAsync(Caller caller, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken)
+    public async Task<OperationResult<MemberPageResult>> ListAsync(Caller caller, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken, JsonElement where = default, JsonElement orderBy = default, IReadOnlyList<string>? unknown = null, Func<PlatformError?>? afterGate = null)
     {
         var denied = Permissions.AuthorizeTenant(caller, PlatformAction.ListTenantMembers, null);
         if (denied is not null)
@@ -192,17 +197,49 @@ public sealed class MemberService
             return OperationResult<MemberPageResult>.Fail(denied);
         }
 
-        var fingerprint = "members|" + caller.Tenant.Id;
+        if (PlatformSupport.AfterGate(afterGate) is { } blocked)
+        {
+            return OperationResult<MemberPageResult>.Fail(blocked);
+        }
+
+        var parsed = CatalogQueryParser.Parse(CatalogKind.TenantMember, where, orderBy, unknown);
+        if (parsed.Error is not null)
+        {
+            return OperationResult<MemberPageResult>.Fail(parsed.Error);
+        }
+
+        var fingerprint = "members|" + caller.Tenant.Id + parsed.Value!.Canonical;
         var window = PlatformSupport.OpenPage(caller.Tenant, pageSize, pageSizeSpecified, continuation, fingerprint);
         if (window.Error is not null)
         {
             return OperationResult<MemberPageResult>.Fail(window.Error);
         }
 
-        var page = await _members.ListAsync(caller.Tenant.Id, window.Value!.PageSize, window.Value.Cursor, cancellationToken).ConfigureAwait(false);
+        var query = new CompiledCatalogQuery
+        {
+            Kind = CatalogKind.TenantMember,
+            TenantId = caller.Tenant.Id,
+            Where = parsed.Value.Where,
+            OrderBy = parsed.Value.OrderBy,
+            DefaultSort = parsed.Value.DefaultSort,
+            PageSize = window.Value!.PageSize,
+            StoreCursor = window.Value.Cursor,
+        };
+        ResultPage<MemberDocument> page;
+        try
+        {
+            page = await _members.QueryAsync(query, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidContinuationException)
+        {
+            return OperationResult<MemberPageResult>.Fail(PlatformError.BadRequest("continuation: invalid token"));
+        }
+
+        var views = page.Items.Select(ToResult).ToArray();
         return OperationResult<MemberPageResult>.Ok(new MemberPageResult(
-            page.Items.Select(ToResult).ToArray(),
-            PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation)));
+            views,
+            PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation, window.Value.RowStart + views.Length),
+            window.Value.RowStart));
     }
 
     /// <summary>Assigns or removes the TenantOwner flag. FR-9.</summary>
@@ -429,8 +466,11 @@ public sealed class MemberService
     /// <param name="continuation">The continuation token, or null.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <param name="afterGate">A check that runs after access is allowed.</param>
+    /// <param name="where">The where value, or undefined.</param>
+    /// <param name="orderBy">The orderBy value, or undefined.</param>
+    /// <param name="unknown">Unknown query keys.</param>
     /// <returns>The page.</returns>
-    public async Task<OperationResult<WorkspaceMemberPageResult>> ListWorkspaceMembersAsync(Caller caller, string workspaceId, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null)
+    public async Task<OperationResult<WorkspaceMemberPageResult>> ListWorkspaceMembersAsync(Caller caller, string workspaceId, int? pageSize, bool pageSizeSpecified, string? continuation, CancellationToken cancellationToken, Func<PlatformError?>? afterGate = null, JsonElement where = default, JsonElement orderBy = default, IReadOnlyList<string>? unknown = null)
     {
         var workspace = await LiveWorkspaceAsync(caller, workspaceId, cancellationToken).ConfigureAwait(false);
         if (workspace.Error is not null)
@@ -449,16 +489,45 @@ public sealed class MemberService
             return OperationResult<WorkspaceMemberPageResult>.Fail(blocked);
         }
 
-        var fingerprint = "workspace-members|" + caller.Tenant.Id + "|" + workspaceId;
+        var parsed = CatalogQueryParser.Parse(CatalogKind.WorkspaceMember, where, orderBy, unknown);
+        if (parsed.Error is not null)
+        {
+            return OperationResult<WorkspaceMemberPageResult>.Fail(parsed.Error);
+        }
+
+        var fingerprint = "workspace-members|" + caller.Tenant.Id + "|" + workspaceId + parsed.Value!.Canonical;
         var window = PlatformSupport.OpenPage(caller.Tenant, pageSize, pageSizeSpecified, continuation, fingerprint);
         if (window.Error is not null)
         {
             return OperationResult<WorkspaceMemberPageResult>.Fail(window.Error);
         }
 
-        var page = await _members.ListByWorkspaceAsync(caller.Tenant.Id, workspaceId, window.Value!.PageSize, window.Value.Cursor, cancellationToken).ConfigureAwait(false);
+        var query = new CompiledCatalogQuery
+        {
+            Kind = CatalogKind.WorkspaceMember,
+            TenantId = caller.Tenant.Id,
+            WorkspaceId = workspaceId,
+            Where = parsed.Value.Where,
+            OrderBy = parsed.Value.OrderBy,
+            DefaultSort = parsed.Value.DefaultSort,
+            PageSize = window.Value!.PageSize,
+            StoreCursor = window.Value.Cursor,
+        };
+        ResultPage<MemberDocument> page;
+        try
+        {
+            page = await _members.QueryAsync(query, cancellationToken).ConfigureAwait(false);
+        }
+        catch (InvalidContinuationException)
+        {
+            return OperationResult<WorkspaceMemberPageResult>.Fail(PlatformError.BadRequest("continuation: invalid token"));
+        }
+
         var views = page.Items.Select(member => new WorkspaceMemberView(member.Email, StoredRoles.ToApi(member.WorkspaceRoles[workspaceId]))).ToArray();
-        return OperationResult<WorkspaceMemberPageResult>.Ok(new WorkspaceMemberPageResult(views, PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation)));
+        return OperationResult<WorkspaceMemberPageResult>.Ok(new WorkspaceMemberPageResult(
+            views,
+            PlatformSupport.Seal(fingerprint, window.Value.PageSize, page.Continuation, window.Value.RowStart + views.Length),
+            window.Value.RowStart));
     }
 
     /// <summary>Assigns a role while creating a workspace. The caller has already been authorized.</summary>
@@ -507,7 +576,7 @@ public sealed class MemberService
         MemberDocument member;
         if (existing is null)
         {
-            member = CreateMember(caller.Tenant.Id, email, false);
+            (member, _) = CreateMember(caller.Tenant.Id, email, false);
             member.WorkspaceRoles[workspace.Id] = storedRole;
             var duplicate = await Unique.CreateAsync(ct => _members.CreateAsync(member, ct), "email: already exists", cancellationToken).ConfigureAwait(false);
             if (duplicate is not null)
@@ -574,12 +643,12 @@ public sealed class MemberService
         }
     }
 
-    private MemberDocument CreateMember(string tenantId, string email, bool isTenantOwner)
+    private (MemberDocument Member, string Token) CreateMember(string tenantId, string email, bool isTenantOwner)
     {
         var id = PlatformSupport.NewId();
         var issued = _tokens.Issue(tenantId, id);
         var now = _clock.UtcNow;
-        return new MemberDocument
+        var member = new MemberDocument
         {
             Id = id,
             TenantId = tenantId,
@@ -590,6 +659,7 @@ public sealed class MemberService
             Created = now,
             LastTokenIssued = now,
         };
+        return (member, issued.Token);
     }
 
     private async Task<OperationResult<MemberDocument>> RequireTenantMemberAsync(Caller caller, PlatformAction action, string? email, CancellationToken cancellationToken)
