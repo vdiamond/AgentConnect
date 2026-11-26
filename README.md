@@ -51,3 +51,8 @@ Secrets are environment variables or Container Apps secrets. Do not put them in 
 | `AgentConnect__ApplicationInsights__ConnectionString` | Audit and telemetry |
 
 Cosmos and email access use `ManagedIdentityCredential` for the system-assigned identity. The emulator key is read only from `AGENTCONNECT_COSMOS_KEY` and is never committed. It is used only for a loopback endpoint outside Production, as in the table above. Queries that order by two properties need composite indexes (`created`+`id`, `emailLower`+`id`, `isTenantOwner`+`id`, and `invitationSent`+`id` on Members; `updated`+`id`, `name`+`id`, and `created`+`id` on Workspaces; `updated`+`id`, `name`+`id`, `schemaVersion`+`id`, and `created`+`id` on Lists; `updated`+`id` on Items). Members, Workspaces, and Lists also need a unique key policy. Cosmos DB can only set a unique key when the container is created; it cannot be added later. The paths are Members `/emailLower` (partition `/tenantId`), Workspaces `/nameKey` (partition `/tenantId`), and Lists `/nameKey` (partition `/tenantId` and `/workspaceId`). A Members container created for v6 with unique key `/emailKey` and composite index `email`+`id` has to be recreated; that unique key cannot be changed in place. Tenants and Items have no unique key. The emulator tests create those containers, indexes, and unique keys. The application does not create Azure resources.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
